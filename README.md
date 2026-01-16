@@ -28,7 +28,7 @@ A modular experimental framework for face transformation research, supporting si
 
 ```bash
 # Clone repository
-git clone https://github.com/your-org/StyleFormer.git
+git clone https://github.com/OpenPrism-Labs/StyleFormer.git
 cd StyleFormer
 
 # Create conda environment
