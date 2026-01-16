@@ -1,0 +1,37 @@
+# @package data
+# FFHQ dataset configuration (no attribute labels)
+
+_target_: src.data.datamodule.FaceDataModule
+
+name: ffhq
+root: ${paths.ffhq_dir}
+
+# Image settings
+image_size: 256
+channels: 3
+
+# Dataset splits
+splits:
+  train: 0.9
+  val: 0.1
+  test: 0.0  # No test split for FFHQ
+
+# FFHQ has no attributes - used for unconditional training
+attributes:
+  selected: []
+  filter: null
+
+# No pairing for FFHQ (unconditional)
+pairing:
+  enabled: false
+
+# Augmentation
+augmentation:
+  train:
+    horizontal_flip: true
+    color_jitter: false
+    random_crop: false
+  val:
+    horizontal_flip: false
+    color_jitter: false
+    random_crop: false

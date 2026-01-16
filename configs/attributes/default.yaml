@@ -1,0 +1,56 @@
+# @package attributes
+# Multi-attribute configuration for face transformation
+
+# Available attributes and their properties
+definitions:
+  age:
+    type: continuous          # continuous = slider, discrete = class
+    range: [-3.0, 3.0]        # latent direction magnitude bounds
+    labels: ["young", "old"]
+    celeba_attr: "Young"      # Corresponding CelebA attribute name
+    default_strength: 2.0
+    
+  gender:
+    type: continuous
+    range: [-3.0, 3.0]
+    labels: ["female", "male"]
+    celeba_attr: "Male"
+    default_strength: 2.0
+    
+  # Additional attributes students can experiment with
+  smile:
+    type: continuous
+    range: [-2.0, 2.0]
+    labels: ["neutral", "smiling"]
+    celeba_attr: "Smiling"
+    default_strength: 1.5
+    
+  glasses:
+    type: discrete
+    range: [0, 1]
+    labels: ["no_glasses", "glasses"]
+    celeba_attr: "Eyeglasses"
+    default_strength: 1.0
+
+# Active attributes for this experiment
+active: ["age", "gender"]
+
+# Transformation settings
+transform:
+  mode: simultaneous          # simultaneous | sequential
+  
+  # Disentanglement constraints
+  null_space_projection: true  # Prevent attribute leakage
+  orthogonalize: true          # Orthogonalize direction vectors
+  
+  # Target values (override per experiment)
+  targets:
+    age: 0.0                   # 0 = no change, positive = old, negative = young
+    gender: 0.0
+
+# Direction vector paths (learned from data)
+direction_files:
+  age: ${paths.directions_dir}/age.npy
+  gender: ${paths.directions_dir}/gender.npy
+  smile: ${paths.directions_dir}/smile.npy
+  glasses: ${paths.directions_dir}/glasses.npy

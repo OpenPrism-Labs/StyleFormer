@@ -1,0 +1,20 @@
+# @package paths
+# Path configuration - edit for your environment
+
+# Project root (auto-detected or set via env)
+root: ${oc.env:STYLEFORMER_ROOT,${hydra:runtime.cwd}}
+
+# Data directories
+data_dir: ${paths.root}/data
+ffhq_dir: ${paths.data_dir}/ffhq
+celeba_hq_dir: ${paths.data_dir}/celeba_hq
+directions_dir: ${paths.data_dir}/directions
+
+# Pretrained model weights
+pretrained_dir: ${paths.root}/pretrained
+
+# Output directories
+output_dir: ${hydra:runtime.output_dir}
+checkpoint_dir: ${paths.output_dir}/checkpoints
+samples_dir: ${paths.output_dir}/samples
+logs_dir: ${paths.root}/logs

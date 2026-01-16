@@ -1,0 +1,57 @@
+# @package _global_
+# Base configuration - shared defaults for all experiments
+
+defaults:
+  - _self_
+  - paths: default
+  - attributes: default
+  - data: celeba_hq
+  - optional experiment: null
+
+# Experiment metadata
+experiment:
+  name: baseline
+  seed: 42
+  tags: []
+
+# Training configuration
+training:
+  max_epochs: 100
+  val_check_interval: 1.0
+  log_every_n_steps: 50
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 1
+  precision: "16-mixed"
+  
+# Optimization defaults (students can override)
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 1e-4
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  T_max: ${training.max_epochs}
+  eta_min: 1e-6
+
+# Data loading
+dataloader:
+  batch_size: 16
+  num_workers: 4
+  pin_memory: true
+  drop_last: true
+  persistent_workers: true
+
+# Logging
+logging:
+  project: "styleformer"
+  entity: null  # W&B entity
+  offline: false
+  log_images_every_n_steps: 500
+
+# Hardware
+hardware:
+  accelerator: "auto"
+  devices: 1
+  strategy: "auto"

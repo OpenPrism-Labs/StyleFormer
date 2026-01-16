@@ -1,0 +1,44 @@
+# @package data
+# CelebA-HQ dataset configuration
+
+_target_: src.data.datamodule.FaceDataModule
+
+name: celeba_hq
+root: ${paths.celeba_hq_dir}
+
+# Image settings
+image_size: 256
+channels: 3
+
+# Dataset splits
+splits:
+  train: 0.8
+  val: 0.1
+  test: 0.1
+
+# Attribute configuration
+attributes:
+  # Attributes to load as labels
+  selected: ${attributes.active}
+  
+  # Filter dataset by attributes (null = no filtering)
+  filter: null
+  # Example filter: {"Male": 1, "Young": 1} for young males only
+
+# Pairing mode for style transfer
+pairing:
+  enabled: true
+  mode: "opposite"              # opposite | random | matched
+  transfer_attr: "gender"       # Primary attribute for pairing
+  preserve_attrs: ["Young"]     # Attributes to match in pairs
+
+# Augmentation
+augmentation:
+  train:
+    horizontal_flip: true
+    color_jitter: true
+    random_crop: false
+  val:
+    horizontal_flip: false
+    color_jitter: false
+    random_crop: false
