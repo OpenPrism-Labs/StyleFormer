@@ -29,7 +29,7 @@ ENV/
 data/ffhq/
 data/celeba_hq/
 data/directions/*.npy
-pretrained/
+/pretrained/
 outputs/
 logs/
 wandb/

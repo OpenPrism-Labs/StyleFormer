@@ -1,0 +1,20 @@
+# Inference configuration
+inference:
+  # Image processing
+  image_size: 256
+  batch_size: 8
+
+  # Device settings
+  device: cuda
+  mixed_precision: true
+
+  # Output settings
+  save_latents: false
+  save_comparison: true
+
+  # Interpolation
+  n_interpolation_steps: 10
+
+  # Grid visualization
+  grid_columns: 4
+  grid_padding: 4

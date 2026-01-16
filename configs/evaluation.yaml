@@ -1,0 +1,25 @@
+# Evaluation configuration
+evaluation:
+  # Metrics to compute
+  compute_fid: true
+  compute_identity: true
+  compute_attribute: true
+
+  # Sample limits
+  fid_max_samples: 50000
+  identity_max_samples: 10000
+  attribute_max_samples: 10000
+
+  # FID settings
+  fid_dims: 2048
+
+  # Batch size for evaluation
+  batch_size: 32
+  num_workers: 4
+
+  # Classifier paths (optional, for attribute accuracy)
+  classifiers:
+    age: null  # Path to age classifier
+    gender: null  # Path to gender classifier
+    smile: null  # Path to smile classifier
+    glasses: null  # Path to glasses classifier
