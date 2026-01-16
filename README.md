@@ -11,6 +11,9 @@ A modular experimental framework for face transformation research, supporting si
 - **Multi-Attribute Transformation**: Manipulate age and gender simultaneously with disentanglement constraints
 - **Flexible Data Pipeline**: PyTorch Lightning DataModule with CelebA-HQ (labeled) and FFHQ (unlabeled) support
 - **Paired Dataset Mode**: Automatic pairing of images with opposite attributes for style transfer training
+- **Evaluation Metrics**: FID, identity similarity (ArcFace), and attribute accuracy
+- **Inference Pipeline**: Batch processing, visualization grids, and interpolation
+- **Pretrained Model Loading**: Utilities for StyleGAN2, e4e, and ArcFace
 - **Hydra Configuration**: Composable YAML configs for reproducible experiments
 - **Modular Architecture**: Clean separation of infrastructure (provided) and models (student-implemented)
 
@@ -28,7 +31,7 @@ A modular experimental framework for face transformation research, supporting si
 
 ```bash
 # Clone repository
-git clone https://github.com/your-org/StyleFormer.git
+git clone https://github.com/OpenPrism-Labs/StyleFormer.git
 cd StyleFormer
 
 # Create conda environment
@@ -48,44 +51,74 @@ pip install -e ".[dev]"
 
 ```
 StyleFormer/
-├── configs/                      # Hydra configuration files
-│   ├── base.yaml                 # Shared defaults
-│   ├── attributes/default.yaml   # Multi-attribute definitions
+├── configs/                          # Hydra configuration files
+│   ├── base.yaml                     # Shared defaults
+│   ├── evaluation.yaml               # Evaluation settings
+│   ├── inference.yaml                # Inference settings
+│   ├── attributes/default.yaml       # Multi-attribute definitions
 │   ├── data/
-│   │   ├── celeba_hq.yaml       # CelebA-HQ dataset config
-│   │   └── ffhq.yaml            # FFHQ dataset config
+│   │   ├── celeba_hq.yaml           # CelebA-HQ dataset config
+│   │   └── ffhq.yaml                # FFHQ dataset config
 │   ├── experiments/
-│   │   └── multi_attr.yaml      # Multi-attribute experiment
-│   └── paths/default.yaml       # Dataset and output paths
+│   │   └── multi_attr.yaml          # Multi-attribute experiment
+│   └── paths/default.yaml           # Dataset and output paths
 │
-├── src/                          # Source code
-│   ├── data/                     # Data loading infrastructure
-│   │   ├── datasets/            # Dataset implementations
-│   │   │   ├── base.py          # Abstract base classes
-│   │   │   ├── celeba_hq.py     # CelebA-HQ with attributes
-│   │   │   └── ffhq.py          # FFHQ dataset
-│   │   ├── datamodule.py        # PyTorch Lightning DataModule
-│   │   └── transforms.py        # Image augmentation pipelines
-│   ├── config/schema.py         # Configuration dataclasses
-│   ├── models/                  # Model implementations (TODO)
-│   │   └── README.md            # Implementation guide
-│   └── utils/                   # Utilities
-│       ├── io.py                # Checkpoint I/O
-│       ├── logging.py           # W&B and console logging
-│       └── visualization.py     # Image grid generation
+├── src/                              # Source code
+│   ├── data/                         # Data loading infrastructure
+│   │   ├── datasets/                # Dataset implementations
+│   │   │   ├── base.py              # Abstract base classes
+│   │   │   ├── celeba_hq.py         # CelebA-HQ with attributes
+│   │   │   └── ffhq.py              # FFHQ dataset
+│   │   ├── datamodule.py            # PyTorch Lightning DataModule
+│   │   └── transforms.py            # Image augmentation pipelines
+│   │
+│   ├── evaluation/                   # Evaluation infrastructure
+│   │   ├── evaluator.py             # Unified evaluation interface
+│   │   └── metrics/
+│   │       ├── fid.py               # Fréchet Inception Distance
+│   │       ├── identity.py          # Identity similarity (ArcFace)
+│   │       └── attribute.py         # Attribute classification accuracy
+│   │
+│   ├── inference/                    # Inference infrastructure
+│   │   └── pipeline.py              # InferencePipeline, MultiAttributePipeline
+│   │
+│   ├── models/                       # Model implementations
+│   │   ├── encoders/                # Image-to-latent encoders
+│   │   │   └── base.py              # BaseEncoder, GradualStyleBlock
+│   │   ├── generators/              # Latent-to-image generators
+│   │   │   └── base.py              # BaseGenerator, SynthesisLayer
+│   │   ├── discriminators/          # Discriminator networks
+│   │   │   └── base.py              # BaseDiscriminator
+│   │   ├── losses/                  # Loss functions
+│   │   │   ├── base.py              # L1, L2, reconstruction losses
+│   │   │   ├── perceptual.py        # VGG perceptual, LPIPS
+│   │   │   ├── identity.py          # ArcFace identity loss
+│   │   │   └── adversarial.py       # GAN losses, R1 regularization
+│   │   ├── lightning_modules/       # PyTorch Lightning modules
+│   │   │   └── base.py              # BaseTransformerModule
+│   │   ├── pretrained/              # Pretrained model loading
+│   │   │   ├── download.py          # Model download utilities
+│   │   │   ├── stylegan2.py         # StyleGAN2 loader
+│   │   │   ├── e4e.py               # e4e/pSp encoder loader
+│   │   │   └── arcface.py           # ArcFace loader
+│   │   └── README.md                # Implementation guide
+│   │
+│   ├── config/schema.py             # Configuration dataclasses
+│   └── utils/                       # Utilities
+│       ├── io.py                    # Checkpoint I/O
+│       ├── logging.py               # W&B and console logging
+│       └── visualization.py         # Image grid generation
 │
-├── scripts/                      # Entry points
-│   ├── train.py                 # Training script
-│   └── prepare_data.py          # Dataset preparation
+├── scripts/                          # Entry points
+│   ├── train.py                     # Training script
+│   ├── evaluate.py                  # Evaluation script
+│   ├── inference.py                 # Inference script
+│   └── prepare_data.py              # Dataset preparation
 │
-├── data/                         # Datasets (gitignored)
-│   ├── celeba_hq/
-│   ├── ffhq/
-│   └── directions/              # Learned attribute directions
-│
-├── pretrained/                   # Pretrained weights (gitignored)
-├── outputs/                      # Experiment outputs (gitignored)
-└── notebooks/                    # Jupyter notebooks
+├── data/                             # Datasets (gitignored)
+├── pretrained/                       # Pretrained weights (gitignored)
+├── outputs/                          # Experiment outputs (gitignored)
+└── notebooks/                        # Jupyter notebooks
 ```
 
 ---
@@ -115,6 +148,232 @@ python scripts/train.py
 # Use the multi-attribute experiment config
 python scripts/train.py experiment=multi_attr
 ```
+
+---
+
+## Evaluation
+
+Evaluate trained models using FID, identity similarity, and attribute accuracy metrics.
+
+### Command Line
+
+```bash
+# Basic evaluation
+python scripts/evaluate.py \
+    --generated-dir outputs/generated \
+    --source-dir data/celeba_hq/test \
+    --real-dir data/celeba_hq/train
+
+# With target attributes for accuracy measurement
+python scripts/evaluate.py \
+    --generated-dir outputs/generated \
+    --source-dir data/celeba_hq/test \
+    --target-age old \
+    --target-gender female
+
+# Skip certain metrics
+python scripts/evaluate.py \
+    --generated-dir outputs/generated \
+    --source-dir data/celeba_hq/test \
+    --no-fid \
+    --no-attribute
+
+# Save results to JSON
+python scripts/evaluate.py \
+    --generated-dir outputs/generated \
+    --source-dir data/celeba_hq/test \
+    --output-file results/evaluation.json
+```
+
+### Programmatic Usage
+
+```python
+from src.evaluation import Evaluator, FIDCalculator, IdentitySimilarity
+
+# Full evaluation
+evaluator = Evaluator(device="cuda")
+results = evaluator.evaluate_full(
+    source_loader=source_loader,
+    generated_loader=generated_loader,
+    real_loader=real_loader,
+    target_attributes={"age": "old", "gender": "female"},
+)
+print(evaluator.format_results(results))
+
+# Individual metrics
+fid_calc = FIDCalculator(device="cuda")
+fid_score = fid_calc.calculate_from_dataloaders(real_loader, fake_loader)
+
+id_sim = IdentitySimilarity(device="cuda")
+similarity = id_sim.compute_similarity(source_img, generated_img)
+```
+
+### Available Metrics
+
+| Metric | Description | Lower/Higher is Better |
+|--------|-------------|------------------------|
+| **FID** | Fréchet Inception Distance - image quality & diversity | Lower |
+| **Identity Similarity** | Cosine similarity of ArcFace embeddings | Higher |
+| **Attribute Accuracy** | Classification accuracy on target attributes | Higher |
+
+---
+
+## Inference
+
+Run inference with trained models for single images, batches, or directories.
+
+### Command Line
+
+```bash
+# Single image transformation
+python scripts/inference.py \
+    --checkpoint checkpoints/model.ckpt \
+    --model-class StyleGANTransformer \
+    --input input.jpg \
+    --output output.jpg \
+    --target-age old \
+    --target-gender female
+
+# Directory processing
+python scripts/inference.py \
+    --checkpoint checkpoints/model.ckpt \
+    --model-class StyleGANTransformer \
+    --input-dir inputs/ \
+    --output-dir outputs/ \
+    --target-age old
+
+# Create comparison grid
+python scripts/inference.py \
+    --checkpoint checkpoints/model.ckpt \
+    --model-class StyleGANTransformer \
+    --input-dir inputs/ \
+    --output-grid grid.png \
+    --target-age old
+
+# Interpolation between attributes
+python scripts/inference.py \
+    --checkpoint checkpoints/model.ckpt \
+    --model-class StyleGANTransformer \
+    --input input.jpg \
+    --output-dir interpolation/ \
+    --target-age old \
+    --interpolate \
+    --n-steps 10
+
+# Multi-attribute with custom strengths
+python scripts/inference.py \
+    --checkpoint checkpoints/model.ckpt \
+    --model-class StyleGANTransformer \
+    --input input.jpg \
+    --output output.jpg \
+    --target-age old --age-strength 1.0 \
+    --target-gender female --gender-strength 0.5
+```
+
+### Programmatic Usage
+
+```python
+from src.inference import InferencePipeline
+from src.inference.pipeline import MultiAttributePipeline
+
+# Load pipeline from checkpoint
+pipeline = InferencePipeline.from_checkpoint(
+    "checkpoints/model.ckpt",
+    model_class=MyTransformationModel,
+)
+
+# Single image transformation
+result = pipeline.transform(
+    "input.jpg",
+    target_attributes={"age": "old", "gender": "female"},
+)
+pipeline.save_result(result, "output.jpg")
+
+# Batch processing
+results = pipeline.transform_batch(
+    image_paths,
+    target_attributes={"age": "old"},
+)
+
+# Directory processing
+n_processed = pipeline.transform_directory(
+    input_dir="inputs/",
+    output_dir="outputs/",
+    target_attributes={"age": "old"},
+)
+
+# Create visualization grid
+grid = pipeline.create_grid(results, ncols=4, include_source=True)
+grid.save("comparison_grid.png")
+
+# Multi-attribute with per-attribute strengths
+multi_pipeline = MultiAttributePipeline.from_checkpoint(...)
+result = multi_pipeline.transform_multi(
+    "input.jpg",
+    attributes={
+        "age": ("old", 1.0),      # (target, strength)
+        "gender": ("female", 0.5),
+    },
+    use_null_space=True,
+)
+```
+
+---
+
+## Pretrained Model Loading
+
+Utilities for loading pretrained models from various sources.
+
+### Available Models
+
+| Model | Description | Source |
+|-------|-------------|--------|
+| `stylegan2-ffhq-1024` | StyleGAN2 trained on FFHQ 1024x1024 | NVIDIA |
+| `stylegan2-ffhq-256` | StyleGAN2 trained on FFHQ 256x256 | NVIDIA |
+| `e4e-ffhq-1024` | e4e encoder for FFHQ | omertov/encoder4editing |
+| `psp-ffhq-1024` | pSp encoder for FFHQ | eladrich/pixel2style2pixel |
+| `arcface-r100` | ArcFace ResNet-100 | InsightFace |
+| `arcface-r50` | ArcFace ResNet-50 | InsightFace |
+| `interfacegan-age` | Age direction in W space | genforce/interfacegan |
+| `interfacegan-gender` | Gender direction in W space | genforce/interfacegan |
+
+### Usage
+
+```python
+from src.models.pretrained import (
+    load_stylegan2,
+    load_e4e_encoder,
+    load_arcface,
+    download_model,
+    list_available_models,
+)
+
+# List available models
+models = list_available_models()
+for name, description in models.items():
+    print(f"{name}: {description}")
+
+# Load StyleGAN2 generator
+generator = load_stylegan2("stylegan2-ffhq-1024", device="cuda")
+z = torch.randn(1, 512, device="cuda")
+image = generator(z)  # Generate image from Z
+w = generator.mapping(z)  # Get W latent
+image = generator.synthesis(w)  # Generate from W
+
+# Load e4e encoder
+encoder = load_e4e_encoder("e4e-ffhq-1024", device="cuda")
+w_plus = encoder(image)  # Encode to W+ space
+
+# Load ArcFace for identity
+arcface = load_arcface("arcface-r100", device="cuda")
+embedding = arcface(face_image)  # Get identity embedding
+similarity = arcface.compute_similarity(face1, face2)
+
+# Download models manually
+path = download_model("stylegan2-ffhq-1024")
+```
+
+> **Note**: Model URLs in the registry are placeholders. Download models from official sources and place them in `~/.cache/styleformer/` or update the registry.
 
 ---
 
@@ -272,13 +531,43 @@ img_display = denormalize(img_tensor)
 
 ## For Students
 
-Model implementations go in `src/models/`. See [`src/models/README.md`](src/models/README.md) for detailed instructions.
+Model implementations go in `src/models/`. Base classes with detailed docstrings are provided as starting points.
+
+### What's Provided (Infrastructure)
+
+| Component | Location | Description |
+|-----------|----------|-------------|
+| Base Encoder | `src/models/encoders/base.py` | Abstract class with interface |
+| Base Generator | `src/models/generators/base.py` | Abstract class with interface |
+| Base Discriminator | `src/models/discriminators/base.py` | Abstract class with interface |
+| Loss Functions | `src/models/losses/` | L1, L2, perceptual, identity, adversarial |
+| Lightning Module | `src/models/lightning_modules/base.py` | Training loop skeleton |
+| Pretrained Loaders | `src/models/pretrained/` | Loading utilities (architecture stubs) |
+
+### What Students Implement
+
+1. **Encoder Architecture** (`src/models/encoders/`):
+   - Implement `forward()` method in a class inheriting `BaseEncoder`
+   - Options: e4e, pSp, or custom encoder
+
+2. **Generator Architecture** (`src/models/generators/`):
+   - Implement `mapping()` and `synthesis()` in a class inheriting `BaseGenerator`
+   - Or load from pretrained using `src/models/pretrained/stylegan2.py`
+
+3. **Latent Editing** (`edit_latent()` method):
+   - InterFaceGAN linear directions
+   - GANSpace PCA directions
+   - Or learned edit network
+
+4. **Training Logic** (`src/models/lightning_modules/`):
+   - Implement `training_step()` and `validation_step()`
+   - Configure losses and optimizers
 
 ### Recommended Implementation Order
 
 1. **Encoder** (`src/models/encoders/`): Implement e4e or pSp for GAN inversion
 2. **Generator** (`src/models/generators/`): Load pretrained StyleGAN2/3
-3. **Losses** (`src/models/losses/`): LPIPS, identity (ArcFace), adversarial
+3. **Losses** (`src/models/losses/`): Implement VGG loading for perceptual loss
 4. **Directions** (`src/models/directions/`): InterFaceGAN or GANSpace
 5. **Lightning Module** (`src/models/lightning_modules/`): Training logic
 
@@ -333,6 +622,7 @@ make clean
 - [e4e](https://arxiv.org/abs/2102.02766) - Tov et al.
 - [InterFaceGAN](https://arxiv.org/abs/1907.10786) - Shen et al.
 - [GANSpace](https://arxiv.org/abs/2004.02546) - Härkönen et al.
+- [ArcFace](https://arxiv.org/abs/1801.07698) - Deng et al.
 
 ### Datasets
 
