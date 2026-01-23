@@ -141,11 +141,35 @@ class ResidualBlock(nn.Module):
             downsample: Whether to downsample spatial dimensions.
         """
         super().__init__()
-        raise NotImplementedError("Students: Implement ResidualBlock.")
+        self.downsample = downsample
+        stride = 2 if downsample else 1
+
+        # Main path
+        self.conv1 = nn.Conv2d(in_channels, out_channels, 3, stride, 1)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, 3, 1, 1)
+
+        # Skip connection
+        if downsample or in_channels != out_channels:
+            self.skip = nn.Conv2d(in_channels, out_channels, 1, stride, 0)
+        else:
+            self.skip = nn.Identity()
+
+        # Activation
+        self.act = nn.LeakyReLU(0.2, inplace=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Apply residual block."""
-        raise NotImplementedError
+        """Apply residual block.
+
+        Args:
+            x: Input tensor (B, C, H, W).
+
+        Returns:
+            Output tensor (B, C_out, H', W').
+        """
+        skip = self.skip(x)
+        x = self.act(self.conv1(x))
+        x = self.conv2(x)
+        return self.act(x + skip)
 
 
 class MinibatchStdDev(nn.Module):
@@ -183,4 +207,27 @@ class MinibatchStdDev(nn.Module):
         Returns:
             Features with std dev channel (B, C+1, H, W).
         """
-        raise NotImplementedError("Students: Implement MinibatchStdDev.")
+        batch_size, channels, height, width = x.shape
+
+        # Handle group size
+        group_size = min(self.group_size, batch_size)
+        if batch_size % group_size != 0:
+            group_size = batch_size
+
+        # Reshape for group computation
+        # (G, M, C, H, W) where G = num_groups, M = group_size
+        y = x.view(group_size, -1, channels, height, width)
+
+        # Compute std within each group
+        y = y - y.mean(dim=0, keepdim=True)
+        y = y.pow(2).mean(dim=0)
+        y = (y + 1e-8).sqrt()
+
+        # Average over all dimensions except batch
+        y = y.mean(dim=[1, 2, 3], keepdim=True)
+
+        # Expand to match input spatial dimensions
+        y = y.repeat(group_size, 1, height, width)
+
+        # Concatenate with input
+        return torch.cat([x, y], dim=1)

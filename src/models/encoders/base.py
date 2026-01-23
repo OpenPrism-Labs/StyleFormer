@@ -159,9 +159,22 @@ class GradualStyleBlock(nn.Module):
             spatial: Spatial size after pooling.
         """
         super().__init__()
-        raise NotImplementedError(
-            "Students: Implement GradualStyleBlock. See docstring."
+        self.out_channels = out_channels
+        self.spatial = spatial
+
+        # Convolutional layers for feature processing
+        self.convs = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, 3, 1, 1),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(out_channels, out_channels, 3, 1, 1),
+            nn.LeakyReLU(0.2, inplace=True),
         )
+
+        # Pool to fixed spatial size
+        self.pool = nn.AdaptiveAvgPool2d((spatial, spatial))
+
+        # Final linear layer to output style code
+        self.fc = nn.Linear(out_channels * spatial * spatial, out_channels)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Convert feature map to style code.
@@ -172,7 +185,10 @@ class GradualStyleBlock(nn.Module):
         Returns:
             Style code (B, out_channels).
         """
-        raise NotImplementedError
+        x = self.convs(x)
+        x = self.pool(x)
+        x = x.flatten(1)
+        return self.fc(x)
 
 
 class Map2Style(nn.Module):
@@ -205,7 +221,16 @@ class Map2Style(nn.Module):
             out_channels: Output dimension (w_dim).
         """
         super().__init__()
-        raise NotImplementedError("Students: Implement Map2Style. See docstring.")
+        self.out_channels = out_channels
+
+        # Convolutional layer for feature processing
+        self.conv = nn.Conv2d(in_channels, out_channels, 3, 1, 1)
+
+        # Global average pooling
+        self.pool = nn.AdaptiveAvgPool2d(1)
+
+        # Final linear layer
+        self.fc = nn.Linear(out_channels, out_channels)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Map feature to style.
@@ -216,4 +241,6 @@ class Map2Style(nn.Module):
         Returns:
             Style code (B, out_channels).
         """
-        raise NotImplementedError
+        x = self.conv(x)
+        x = self.pool(x).flatten(1)
+        return self.fc(x)

@@ -305,13 +305,36 @@ class PathLengthRegularization(BaseLoss):
         """Compute path length regularization.
 
         Args:
-            pred: Generated images.
-            target: Latent codes used to generate images.
+            pred: Generated images (B, 3, H, W).
+            target: Latent codes used to generate images (B, num_ws, w_dim).
 
         Returns:
             Path length regularization loss.
         """
-        raise NotImplementedError(
-            "Students: Implement path length regularization. "
-            "See StyleGAN2 paper for details."
-        )
+        # Get image dimensions
+        batch_size = pred.shape[0]
+        height, width = pred.shape[2], pred.shape[3]
+
+        # Create noise for gradient computation
+        noise = torch.randn_like(pred) / (height * width) ** 0.5
+
+        # Compute gradients of the generator output w.r.t. latents
+        grad = torch.autograd.grad(
+            outputs=(pred * noise).sum(),
+            inputs=target,
+            create_graph=True,
+            retain_graph=True,
+            only_inputs=True,
+        )[0]
+
+        # Compute path lengths
+        path_lengths = grad.pow(2).sum(dim=-1).mean(dim=-1).sqrt()
+
+        # Update running mean
+        pl_mean = self.pl_mean.lerp(path_lengths.mean(), 0.01)
+        self.pl_mean.copy_(pl_mean.detach())
+
+        # Compute loss as deviation from mean
+        path_penalty = (path_lengths - self.pl_mean).pow(2).mean()
+
+        return path_penalty

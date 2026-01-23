@@ -167,9 +167,7 @@ def load_arcface(
             if not checkpoint_path.exists():
                 download_model(str(model_name_or_path))
         except ValueError:
-            raise ValueError(
-                f"'{model_name_or_path}' is not a valid path or model name."
-            )
+            raise ValueError(f"'{model_name_or_path}' is not a valid path or model name.")
 
     # Load checkpoint
     print(f"Loading ArcFace from {checkpoint_path}...")
@@ -251,46 +249,119 @@ def _create_arcface_model(
 
     Returns:
         ArcFace model (uninitialized weights).
-
-    TODO (Students):
-        Implement the ArcFace backbone architecture.
-        Options:
-        1. Use InsightFace's implementation
-        2. Use a standard ResNet with modifications
-        3. Implement IR-SE (Improved ResNet with SE blocks)
-
-        Key differences from standard ResNet:
-        - Uses PReLU instead of ReLU
-        - Uses BatchNorm after last FC layer
-        - Uses IR (Improved Residual) blocks
-        - Optional SE (Squeeze-Excitation) blocks
-
-        Example with InsightFace:
-        ```python
-        from insightface.recognition.arcface_torch import iresnet100
-
-        model = iresnet100(num_features=512)
-        return model
-        ```
-
-        Example with custom implementation:
-        ```python
-        class IRSEResNet(nn.Module):
-            def __init__(self, block, layers, num_features=512):
-                # ... implement IR-SE ResNet
-                pass
-
-        def iresnet100():
-            return IRSEResNet(IRBlock, [3, 13, 30, 3], 512)
-        ```
-
-        Reference: https://github.com/deepinsight/insightface
     """
-    raise NotImplementedError(
-        f"Students: Implement ArcFace {model_type} architecture. "
-        "See docstring for guidance.\n"
-        "Reference: https://github.com/deepinsight/insightface"
-    )
+    # Try to use InsightFace if available
+    try:
+        if model_type == "r100":
+            from insightface.recognition.arcface_torch import iresnet100
+
+            return iresnet100(num_features=512)
+        elif model_type == "r50":
+            from insightface.recognition.arcface_torch import iresnet50
+
+            return iresnet50(num_features=512)
+        elif model_type == "r34":
+            from insightface.recognition.arcface_torch import iresnet34
+
+            return iresnet34(num_features=512)
+        elif model_type == "r18":
+            from insightface.recognition.arcface_torch import iresnet18
+
+            return iresnet18(num_features=512)
+    except ImportError:
+        pass
+
+    # Minimal IR-SE ResNet implementation
+    class BasicBlockIR(nn.Module):
+        """Basic IR (Improved Residual) block for ArcFace."""
+
+        def __init__(self, in_ch: int, out_ch: int, stride: int = 1):
+            super().__init__()
+            self.bn1 = nn.BatchNorm2d(in_ch)
+            self.conv1 = nn.Conv2d(in_ch, out_ch, 3, 1, 1, bias=False)
+            self.bn2 = nn.BatchNorm2d(out_ch)
+            self.prelu = nn.PReLU(out_ch)
+            self.conv2 = nn.Conv2d(out_ch, out_ch, 3, stride, 1, bias=False)
+            self.bn3 = nn.BatchNorm2d(out_ch)
+
+            if stride != 1 or in_ch != out_ch:
+                self.downsample = nn.Sequential(
+                    nn.Conv2d(in_ch, out_ch, 1, stride, bias=False),
+                    nn.BatchNorm2d(out_ch),
+                )
+            else:
+                self.downsample = None
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            identity = x
+            out = self.bn1(x)
+            out = self.conv1(out)
+            out = self.bn2(out)
+            out = self.prelu(out)
+            out = self.conv2(out)
+            out = self.bn3(out)
+
+            if self.downsample is not None:
+                identity = self.downsample(x)
+
+            return out + identity
+
+    class MinimalArcFace(nn.Module):
+        """Minimal ArcFace (IR-SE ResNet) for identity embedding."""
+
+        def __init__(self, layers: list[int], num_features: int = 512):
+            super().__init__()
+
+            # Input layer
+            self.input_layer = nn.Sequential(
+                nn.Conv2d(3, 64, 3, 1, 1, bias=False),
+                nn.BatchNorm2d(64),
+                nn.PReLU(64),
+            )
+
+            # Build layers
+            self.layer1 = self._make_layer(64, 64, layers[0], stride=2)
+            self.layer2 = self._make_layer(64, 128, layers[1], stride=2)
+            self.layer3 = self._make_layer(128, 256, layers[2], stride=2)
+            self.layer4 = self._make_layer(256, 512, layers[3], stride=2)
+
+            # Output layer
+            self.output_layer = nn.Sequential(
+                nn.BatchNorm2d(512),
+                nn.Dropout(0.4),
+                nn.Flatten(),
+                nn.Linear(512 * 7 * 7, num_features),
+                nn.BatchNorm1d(num_features),
+            )
+
+        def _make_layer(self, in_ch: int, out_ch: int, blocks: int, stride: int):
+            layers = [BasicBlockIR(in_ch, out_ch, stride)]
+            for _ in range(1, blocks):
+                layers.append(BasicBlockIR(out_ch, out_ch, 1))
+            return nn.Sequential(*layers)
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            x = self.input_layer(x)
+            x = self.layer1(x)
+            x = self.layer2(x)
+            x = self.layer3(x)
+            x = self.layer4(x)
+            x = self.output_layer(x)
+            return x
+
+    # Select architecture based on model type
+    if model_type == "r100":
+        layers = [3, 13, 30, 3]
+    elif model_type == "r50":
+        layers = [3, 4, 14, 3]
+    elif model_type == "r34":
+        layers = [3, 4, 6, 3]
+    elif model_type == "r18":
+        layers = [2, 2, 2, 2]
+    else:
+        layers = [3, 4, 14, 3]  # Default to R50
+
+    return MinimalArcFace(layers=layers, num_features=512)
 
 
 class IdentityLoss(nn.Module):

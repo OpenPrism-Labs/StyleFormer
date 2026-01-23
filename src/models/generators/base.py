@@ -174,10 +174,27 @@ class SynthesisLayer(nn.Module):
             kernel_size: Convolution kernel size.
         """
         super().__init__()
-        raise NotImplementedError(
-            "Students: Implement SynthesisLayer. "
-            "See StyleGAN2 paper for details."
-        )
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.w_dim = w_dim
+        self.resolution = resolution
+        self.kernel_size = kernel_size
+        self.padding = kernel_size // 2
+
+        # Style modulation (affine transform from w to style)
+        self.affine = nn.Linear(w_dim, in_channels)
+
+        # Modulated convolution weights
+        self.weight = nn.Parameter(torch.randn(out_channels, in_channels, kernel_size, kernel_size))
+        self.weight_gain = 1.0 / (in_channels * kernel_size**2) ** 0.5
+
+        # Noise injection
+        self.noise_strength = nn.Parameter(torch.zeros(1))
+        self.register_buffer("noise_const", torch.randn(1, 1, resolution, resolution))
+
+        # Bias and activation
+        self.bias = nn.Parameter(torch.zeros(out_channels))
+        self.act = nn.LeakyReLU(0.2, inplace=True)
 
     def forward(
         self,
@@ -188,14 +205,47 @@ class SynthesisLayer(nn.Module):
         """Apply synthesis layer.
 
         Args:
-            x: Input feature map.
-            w: Style vector.
+            x: Input feature map (B, C_in, H, W).
+            w: Style vector (B, w_dim).
             noise: Noise tensor (optional).
 
         Returns:
-            Output feature map.
+            Output feature map (B, C_out, H, W).
         """
-        raise NotImplementedError
+        batch_size = x.shape[0]
+
+        # Get style modulation
+        style = self.affine(w)  # (B, in_channels)
+
+        # Modulate weights
+        weight = self.weight * self.weight_gain
+        # Modulate: weight * style (per-sample modulation)
+        weight = weight.unsqueeze(0) * style.view(batch_size, 1, -1, 1, 1)
+
+        # Demodulation (normalize)
+        demod = (weight.pow(2).sum(dim=[2, 3, 4]) + 1e-8).rsqrt()
+        weight = weight * demod.view(batch_size, -1, 1, 1, 1)
+
+        # Group convolution (fused for efficiency)
+        weight = weight.view(
+            batch_size * self.out_channels, self.in_channels, self.kernel_size, self.kernel_size
+        )
+        x = x.view(1, batch_size * self.in_channels, x.shape[2], x.shape[3])
+        x = nn.functional.conv2d(x, weight, padding=self.padding, groups=batch_size)
+        x = x.view(batch_size, self.out_channels, x.shape[2], x.shape[3])
+
+        # Noise injection
+        if noise is None:
+            noise = self.noise_const
+            if noise.shape[2:] != x.shape[2:]:
+                noise = torch.randn(batch_size, 1, x.shape[2], x.shape[3], device=x.device)
+        x = x + self.noise_strength * noise
+
+        # Bias and activation
+        x = x + self.bias.view(1, -1, 1, 1)
+        x = self.act(x)
+
+        return x
 
 
 class ToRGB(nn.Module):
@@ -218,7 +268,18 @@ class ToRGB(nn.Module):
             w_dim: Style dimension.
         """
         super().__init__()
-        raise NotImplementedError("Students: Implement ToRGB layer.")
+        self.in_channels = in_channels
+        self.w_dim = w_dim
+
+        # Style modulation
+        self.affine = nn.Linear(w_dim, in_channels)
+
+        # Modulated 1x1 convolution to RGB
+        self.weight = nn.Parameter(torch.randn(3, in_channels, 1, 1))
+        self.weight_gain = 1.0 / in_channels**0.5
+
+        # Bias
+        self.bias = nn.Parameter(torch.zeros(3))
 
     def forward(
         self,
@@ -228,10 +289,32 @@ class ToRGB(nn.Module):
         """Convert features to RGB.
 
         Args:
-            x: Feature map.
-            w: Style vector.
+            x: Feature map (B, C, H, W).
+            w: Style vector (B, w_dim).
 
         Returns:
             RGB image (B, 3, H, W).
         """
-        raise NotImplementedError
+        batch_size = x.shape[0]
+
+        # Get style modulation
+        style = self.affine(w)  # (B, in_channels)
+
+        # Modulate weights
+        weight = self.weight * self.weight_gain
+        weight = weight.unsqueeze(0) * style.view(batch_size, 1, -1, 1, 1)
+
+        # Demodulation
+        demod = (weight.pow(2).sum(dim=[2, 3, 4]) + 1e-8).rsqrt()
+        weight = weight * demod.view(batch_size, -1, 1, 1, 1)
+
+        # Group convolution
+        weight = weight.view(batch_size * 3, self.in_channels, 1, 1)
+        x = x.view(1, batch_size * self.in_channels, x.shape[2], x.shape[3])
+        x = nn.functional.conv2d(x, weight, padding=0, groups=batch_size)
+        x = x.view(batch_size, 3, x.shape[2], x.shape[3])
+
+        # Add bias
+        x = x + self.bias.view(1, -1, 1, 1)
+
+        return x

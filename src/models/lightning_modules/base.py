@@ -146,28 +146,45 @@ class BaseTransformerModule(pl.LightningModule):
 
         Returns:
             Edited latent codes.
+        """
+        edited = w.clone()
 
-        TODO (Students):
-            Implement latent editing using one of:
-            1. InterFaceGAN: Linear directions in W space
-            2. GANSpace: PCA-based directions
-            3. StyleSpace: Edit in S space
-            4. Learned edit network
-
-            Example with InterFaceGAN:
-            ```python
-            edited = w.clone()
+        # Check if we have attribute directions
+        if hasattr(self, "attribute_directions") and self.attribute_directions:
             for attr, direction in self.attribute_directions.items():
                 if attr in target_attributes:
-                    strength = self.get_edit_strength(attr, target_attributes[attr])
-                    edited = edited + strength * direction
-            return edited
-            ```
-        """
-        raise NotImplementedError(
-            "Students: Implement latent editing for attribute manipulation. "
-            "See docstring for approaches."
-        )
+                    # Get target value and compute edit strength
+                    target_value = target_attributes[attr]
+
+                    # Handle different target formats
+                    if isinstance(target_value, (int, float)):
+                        strength = float(target_value)
+                    elif isinstance(target_value, str):
+                        # Map string labels to strengths
+                        strength_map = {
+                            "young": -2.0,
+                            "old": 2.0,
+                            "female": -2.0,
+                            "male": 2.0,
+                        }
+                        strength = strength_map.get(target_value.lower(), 0.0)
+                    elif isinstance(target_value, tuple):
+                        # (target_label, strength) format
+                        _, strength = target_value
+                    else:
+                        strength = 0.0
+
+                    # Apply direction
+                    if direction.dim() == 1:
+                        # W space direction (512,)
+                        direction = direction.unsqueeze(0).unsqueeze(0)
+                    elif direction.dim() == 2:
+                        # W+ space direction (num_ws, 512)
+                        direction = direction.unsqueeze(0)
+
+                    edited = edited + strength * direction.to(w.device)
+
+        return edited
 
     def compute_losses(
         self,
@@ -219,38 +236,44 @@ class BaseTransformerModule(pl.LightningModule):
 
         Returns:
             Total loss for backpropagation.
-
-        TODO (Students):
-            Implement training step:
-            ```python
-            source = batch['image']
-            target_attrs = batch.get('target_attributes', {})
-
-            # Encode
-            latent = self.encode(source)
-
-            # Edit (if training with attribute editing)
-            if target_attrs:
-                latent = self.edit_latent(latent, target_attrs)
-
-            # Decode
-            generated = self.decode(latent)
-
-            # Compute losses
-            loss_dict = self.compute_losses(source, generated)
-            total_loss = sum(loss_dict.values())
-
-            # Log losses
-            for name, value in loss_dict.items():
-                self.log(f'train/{name}', value)
-            self.log('train/total_loss', total_loss)
-
-            return total_loss
-            ```
         """
-        raise NotImplementedError(
-            "Students: Implement training_step. See docstring."
-        )
+        # Handle both paired and unpaired training
+        if "source_image" in batch:
+            # Paired training mode
+            source = batch["source_image"]
+            target = batch.get("target_image", source)
+            target_attrs = batch.get("target_attributes", {})
+        else:
+            # Unpaired training mode
+            source = batch["image"]
+            target = source  # Reconstruction
+            target_attrs = batch.get("target_attributes", {})
+
+        # Encode source image to latent space
+        latent = self.encode(source)
+
+        # Edit latent if target attributes provided
+        if target_attrs:
+            try:
+                latent = self.edit_latent(latent, target_attrs)
+            except NotImplementedError:
+                pass  # Skip editing if not implemented
+
+        # Decode to generate output
+        generated = self.decode(latent)
+
+        # Compute losses
+        loss_dict = self.compute_losses(source, generated, target=target, latent=latent)
+
+        # Calculate total loss
+        total_loss = sum(loss_dict.values())
+
+        # Log losses
+        for name, value in loss_dict.items():
+            self.log(f"train/{name}", value, on_step=True, on_epoch=True, prog_bar=False)
+        self.log("train/total_loss", total_loss, on_step=True, on_epoch=True, prog_bar=True)
+
+        return total_loss
 
     def validation_step(
         self,
@@ -265,36 +288,46 @@ class BaseTransformerModule(pl.LightningModule):
 
         Returns:
             Validation loss.
-
-        TODO (Students):
-            Implement validation step similar to training_step.
         """
-        raise NotImplementedError(
-            "Students: Implement validation_step."
-        )
+        # Handle both paired and unpaired validation
+        if "source_image" in batch:
+            source = batch["source_image"]
+            target = batch.get("target_image", source)
+            target_attrs = batch.get("target_attributes", {})
+        else:
+            source = batch["image"]
+            target = source
+            target_attrs = batch.get("target_attributes", {})
+
+        # Encode source image
+        latent = self.encode(source)
+
+        # Edit latent if target attributes provided
+        if target_attrs:
+            try:
+                latent = self.edit_latent(latent, target_attrs)
+            except NotImplementedError:
+                pass
+
+        # Decode to generate output
+        generated = self.decode(latent)
+
+        # Compute losses
+        loss_dict = self.compute_losses(source, generated, target=target, latent=latent)
+        total_loss = sum(loss_dict.values())
+
+        # Log losses
+        for name, value in loss_dict.items():
+            self.log(f"val/{name}", value, on_epoch=True, prog_bar=False)
+        self.log("val/total_loss", total_loss, on_epoch=True, prog_bar=True)
+
+        return total_loss
 
     def configure_optimizers(self) -> dict[str, Any]:
         """Configure optimizers and schedulers.
 
         Returns:
             Optimizer configuration dictionary.
-
-        Example:
-            >>> def configure_optimizers(self):
-            ...     optimizer = torch.optim.Adam(
-            ...         self.parameters(),
-            ...         lr=self.learning_rate,
-            ...     )
-            ...     scheduler = torch.optim.lr_scheduler.StepLR(
-            ...         optimizer, step_size=10000, gamma=0.5
-            ...     )
-            ...     return {
-            ...         'optimizer': optimizer,
-            ...         'lr_scheduler': {
-            ...             'scheduler': scheduler,
-            ...             'interval': 'step',
-            ...         }
-            ...     }
         """
         optimizer = torch.optim.Adam(
             self.parameters(),
@@ -351,17 +384,11 @@ class GANTrainerMixin:
     r1_reg: nn.Module | None
 
     def setup_gan_losses(self) -> None:
-        """Setup GAN-specific losses.
+        """Setup GAN-specific losses."""
+        from src.models.losses import NonSaturatingLoss, R1Regularization
 
-        TODO (Students):
-            ```python
-            from src.models.losses import NonSaturatingLoss, R1Regularization
-
-            self.adv_loss = NonSaturatingLoss()
-            self.r1_reg = R1Regularization(weight=10.0, interval=16)
-            ```
-        """
-        raise NotImplementedError("Students: Setup GAN losses.")
+        self.adv_loss = NonSaturatingLoss()
+        self.r1_reg = R1Regularization(weight=10.0, interval=16)
 
     def discriminator_step(
         self,
@@ -378,25 +405,20 @@ class GANTrainerMixin:
 
         Returns:
             Discriminator loss.
-
-        TODO (Students):
-            ```python
-            real_pred = self.discriminator(real)
-            fake_pred = self.discriminator(fake.detach())
-
-            d_loss = self.adv_loss(real_pred, True) + self.adv_loss(fake_pred, False)
-
-            # R1 regularization
-            if self.r1_reg and step % self.r1_reg.interval == 0:
-                real.requires_grad_(True)
-                real_pred = self.discriminator(real)
-                r1_loss = self.r1_reg(real_pred, real)
-                d_loss = d_loss + r1_loss
-
-            return d_loss
-            ```
         """
-        raise NotImplementedError("Students: Implement discriminator step.")
+        real_pred = self.discriminator(real)
+        fake_pred = self.discriminator(fake.detach())
+
+        d_loss = self.adv_loss(real_pred, True) + self.adv_loss(fake_pred, False)
+
+        # R1 regularization
+        if self.r1_reg and step % self.r1_reg.interval == 0:
+            real.requires_grad_(True)
+            real_pred = self.discriminator(real)
+            r1_loss = self.r1_reg(real_pred, real)
+            d_loss = d_loss + r1_loss
+
+        return d_loss
 
     def generator_step(
         self,
@@ -409,11 +431,6 @@ class GANTrainerMixin:
 
         Returns:
             Generator adversarial loss.
-
-        TODO (Students):
-            ```python
-            fake_pred = self.discriminator(fake)
-            return self.adv_loss.generator_loss(fake_pred)
-            ```
         """
-        raise NotImplementedError("Students: Implement generator step.")
+        fake_pred = self.discriminator(fake)
+        return self.adv_loss.generator_loss(fake_pred)

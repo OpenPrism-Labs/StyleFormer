@@ -138,9 +138,7 @@ def load_e4e_encoder(
             if not checkpoint_path.exists():
                 download_model(str(model_name_or_path))
         except ValueError:
-            raise ValueError(
-                f"'{model_name_or_path}' is not a valid path or model name."
-            )
+            raise ValueError(f"'{model_name_or_path}' is not a valid path or model name.")
 
     # Load checkpoint
     print(f"Loading e4e encoder from {checkpoint_path}...")
@@ -199,49 +197,131 @@ def _create_e4e_encoder(
 
     Returns:
         Encoder module (uninitialized weights).
-
-    TODO (Students):
-        Implement the e4e encoder architecture.
-        The encoder consists of:
-        1. A feature pyramid network (FPN) backbone
-        2. map2style layers that convert features to W+ codes
-        3. Progressive training for multi-scale encoding
-
-        Key components:
-        - Backbone: Usually ResNet-based (e.g., IR-SE50)
-        - map2style: Conv layers mapping features to style codes
-        - Output: (B, num_ws, w_dim) tensor in W+ space
-
-        Example structure:
-        ```python
-        class E4EEncoder(nn.Module):
-            def __init__(self, w_dim=512, num_ws=18):
-                super().__init__()
-                self.backbone = IRSEBackbone()  # Feature extractor
-                self.styles = nn.ModuleList([
-                    nn.Sequential(
-                        nn.Conv2d(512, 512, 3, 1, 1),
-                        nn.LeakyReLU(),
-                        nn.AdaptiveAvgPool2d(1),
-                        nn.Flatten(),
-                        nn.Linear(512, w_dim),
-                    )
-                    for _ in range(num_ws)
-                ])
-
-            def forward(self, x):
-                features = self.backbone(x)
-                styles = [style(feat) for style, feat in zip(self.styles, features)]
-                return torch.stack(styles, dim=1)
-        ```
-
-        Reference: https://github.com/omertov/encoder4editing
     """
-    raise NotImplementedError(
-        "Students: Implement e4e encoder architecture. "
-        "See docstring for guidance.\n"
-        "Reference: https://github.com/omertov/encoder4editing"
-    )
+    # Try to use encoder4editing if available
+    try:
+        from models.encoders.psp_encoders import Encoder4Editing
+
+        return Encoder4Editing(50, "ir_se", num_ws)
+    except ImportError:
+        pass
+
+    class MinimalE4EEncoder(nn.Module):
+        """Minimal e4e encoder for loading pretrained weights.
+
+        This provides a basic IR-SE ResNet backbone with map2style layers.
+        For full implementation, use the official e4e repository.
+        """
+
+        def __init__(self, w_dim: int = 512, num_ws: int = 18):
+            super().__init__()
+            self.w_dim = w_dim
+            self.num_ws = num_ws
+
+            # Simple backbone (IR-SE50 simplified)
+            self.input_layer = nn.Sequential(
+                nn.Conv2d(3, 64, 3, 1, 1, bias=False),
+                nn.BatchNorm2d(64),
+                nn.PReLU(64),
+            )
+
+            # Feature pyramid levels
+            self.body = nn.ModuleList(
+                [
+                    self._make_layer(64, 64, 3, stride=2),  # 128 -> 64
+                    self._make_layer(64, 128, 4, stride=2),  # 64 -> 32
+                    self._make_layer(128, 256, 14, stride=2),  # 32 -> 16
+                    self._make_layer(256, 512, 3, stride=2),  # 16 -> 8
+                ]
+            )
+
+            # Map2style layers for each level
+            self.styles = nn.ModuleList()
+            # Coarse styles (from 8x8 features)
+            for i in range(4):
+                self.styles.append(self._make_style(512, w_dim))
+            # Medium styles (from 16x16 features)
+            for i in range(4):
+                self.styles.append(self._make_style(256, w_dim))
+            # Fine styles (from 32x32 features)
+            for i in range(num_ws - 8):
+                self.styles.append(self._make_style(128, w_dim))
+
+            self.progressive_stage = num_ws
+
+        def _make_layer(self, in_ch: int, out_ch: int, blocks: int, stride: int = 1):
+            """Create a residual layer."""
+            layers = [self._make_block(in_ch, out_ch, stride)]
+            for _ in range(1, blocks):
+                layers.append(self._make_block(out_ch, out_ch, 1))
+            return nn.Sequential(*layers)
+
+        def _make_block(self, in_ch: int, out_ch: int, stride: int):
+            """Create a residual block."""
+            return nn.Sequential(
+                nn.BatchNorm2d(in_ch),
+                nn.Conv2d(in_ch, out_ch, 3, stride, 1, bias=False),
+                nn.BatchNorm2d(out_ch),
+                nn.PReLU(out_ch),
+                nn.Conv2d(out_ch, out_ch, 3, 1, 1, bias=False),
+                nn.BatchNorm2d(out_ch),
+            )
+
+        def _make_style(self, in_ch: int, out_ch: int):
+            """Create a map2style layer."""
+            return nn.Sequential(
+                nn.Conv2d(in_ch, out_ch, 3, 1, 1),
+                nn.LeakyReLU(0.2),
+                nn.AdaptiveAvgPool2d(1),
+                nn.Flatten(),
+                nn.Linear(out_ch, out_ch),
+            )
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            """Encode images to W+ space.
+
+            Args:
+                x: Input images (B, 3, 256, 256) in [-1, 1].
+
+            Returns:
+                W+ latent codes (B, num_ws, w_dim).
+            """
+            # Initial features
+            x = self.input_layer(x)
+
+            # Feature pyramid
+            features = []
+            for layer in self.body:
+                x = layer(x) + (
+                    nn.functional.avg_pool2d(x, 2) if x.shape[-1] > layer[0][1].num_features else x
+                )
+                features.append(x)
+
+            # Extract styles from different levels
+            styles = []
+            feat_idx = len(features) - 1  # Start from coarsest
+
+            for i, style_layer in enumerate(self.styles):
+                if i >= self.progressive_stage:
+                    break
+
+                # Select appropriate feature level
+                if i < 4:
+                    feat = features[3]  # 8x8
+                elif i < 8:
+                    feat = features[2]  # 16x16
+                else:
+                    feat = features[1]  # 32x32
+
+                styles.append(style_layer(feat))
+
+            # Pad if needed
+            while len(styles) < self.num_ws:
+                styles.append(styles[-1].clone())
+
+            return torch.stack(styles, dim=1)
+
+    return MinimalE4EEncoder(w_dim=w_dim, num_ws=num_ws)
 
 
 class PSPEncoderWrapper(E4EEncoderWrapper):

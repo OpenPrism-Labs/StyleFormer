@@ -75,23 +75,21 @@ class PerceptualLoss(BaseLoss):
 
         Returns:
             VGG features network.
-
-        TODO (Students):
-            Implement VGG loading:
-            ```python
+        """
+        try:
             from torchvision.models import vgg19, VGG19_Weights
 
             vgg = vgg19(weights=VGG19_Weights.DEFAULT).features
-            vgg.eval()
-            for param in vgg.parameters():
-                param.requires_grad = False
-            return vgg
-            ```
-        """
-        raise NotImplementedError(
-            "Students: Implement VGG loading for perceptual loss. "
-            "Use torchvision.models.vgg19."
-        )
+        except ImportError:
+            # Fallback for older torchvision versions
+            from torchvision.models import vgg19
+
+            vgg = vgg19(pretrained=True).features
+
+        vgg.eval()
+        for param in vgg.parameters():
+            param.requires_grad = False
+        return vgg
 
     def _normalize(self, x: torch.Tensor) -> torch.Tensor:
         """Normalize input from [-1, 1] to VGG range.
@@ -151,9 +149,7 @@ class PerceptualLoss(BaseLoss):
         target_features = self._extract_features(target)
 
         loss = torch.tensor(0.0, device=pred.device)
-        for pred_feat, target_feat, w in zip(
-            pred_features, target_features, self.layer_weights
-        ):
+        for pred_feat, target_feat, w in zip(pred_features, target_features, self.layer_weights):
             loss = loss + w * F.l1_loss(pred_feat, target_feat)
 
         return loss
@@ -200,22 +196,17 @@ class LPIPSLoss(BaseLoss):
 
         Returns:
             LPIPS model.
-
-        TODO (Students):
-            Install and use the lpips package:
-            ```python
+        """
+        try:
             import lpips
+
             model = lpips.LPIPS(net=self.net)
             model.eval()
             for param in model.parameters():
                 param.requires_grad = False
             return model
-            ```
-        """
-        raise NotImplementedError(
-            "Students: Install lpips package and implement loading. "
-            "pip install lpips"
-        )
+        except ImportError:
+            raise ImportError("LPIPS package not found. Please install it with: pip install lpips")
 
     def forward(
         self,

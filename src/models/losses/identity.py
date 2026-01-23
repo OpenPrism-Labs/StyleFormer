@@ -45,27 +45,28 @@ class IdentityLoss(BaseLoss):
 
         Returns:
             ArcFace model.
-
-        TODO (Students):
-            Load or implement ArcFace model:
-            ```python
-            from src.models.pretrained import load_arcface
-            return load_arcface(self.model_path)
-            ```
-
-            Or use insightface:
-            ```python
-            from insightface.recognition.arcface_torch import iresnet100
-            model = iresnet100(num_features=512)
-            model.load_state_dict(torch.load(self.model_path))
-            model.eval()
-            return model
-            ```
         """
-        raise NotImplementedError(
-            "Students: Implement ArcFace loading for identity loss. "
-            "See src/models/pretrained/arcface.py for utilities."
-        )
+        if self.model_path is not None:
+            from src.models.pretrained import load_arcface
+
+            wrapper = load_arcface(self.model_path)
+            return wrapper.model
+        else:
+            # Try to use insightface if available
+            try:
+                from insightface.recognition.arcface_torch import iresnet100
+
+                model = iresnet100(num_features=512)
+                model.eval()
+                for param in model.parameters():
+                    param.requires_grad = False
+                return model
+            except ImportError:
+                raise ImportError(
+                    "ArcFace model path not provided and insightface not available. "
+                    "Please either provide a model_path or install insightface: "
+                    "pip install insightface"
+                )
 
     def _preprocess(self, x: torch.Tensor) -> torch.Tensor:
         """Preprocess images for ArcFace.
