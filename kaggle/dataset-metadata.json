@@ -1,0 +1,41 @@
+{
+  "title": "StyleFormer - Face Transformation Framework",
+  "id": "styleformer-face-transformation",
+  "subtitle": "Multi-attribute face transformation using StyleGAN latent space editing",
+  "description": "A modular experimental framework for face transformation research. Includes encoders (e4e, pSp), StyleGAN2 generator, losses (perceptual, identity, adversarial), and PyTorch Lightning training infrastructure.",
+  "isPrivate": false,
+  "licenses": [
+    {
+      "name": "MIT"
+    }
+  ],
+  "keywords": [
+    "face-transformation",
+    "stylegan",
+    "gan",
+    "deep-learning",
+    "pytorch",
+    "computer-vision",
+    "face-editing",
+    "age-transformation",
+    "gender-transformation"
+  ],
+  "resources": [
+    {
+      "path": "src/",
+      "description": "Source code for StyleFormer framework"
+    },
+    {
+      "path": "configs/",
+      "description": "Hydra configuration files"
+    },
+    {
+      "path": "scripts/",
+      "description": "Training, evaluation, and inference scripts"
+    },
+    {
+      "path": "kaggle/",
+      "description": "Kaggle-specific setup and utilities"
+    }
+  ]
+}

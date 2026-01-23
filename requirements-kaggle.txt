@@ -1,0 +1,34 @@
+# StyleFormer Requirements for Kaggle
+# Install with: pip install -r requirements-kaggle.txt
+
+# Core dependencies (already on Kaggle, but ensure versions)
+torch>=2.0.0
+torchvision>=0.15.0
+numpy>=1.24.0
+pillow>=9.0.0
+pandas>=2.0.0
+tqdm>=4.65.0
+matplotlib>=3.7.0
+
+# Deep learning
+pytorch-lightning>=2.0.0
+einops>=0.6.0
+
+# Configuration
+hydra-core>=1.3.0
+omegaconf>=2.3.0
+
+# Logging (optional on Kaggle)
+wandb>=0.15.0
+
+# Perceptual losses
+lpips>=0.1.4
+
+# Image processing
+opencv-python>=4.7.0
+
+# Optional: Face recognition (for identity loss)
+# insightface>=0.7.0  # Heavy dependency, install only if needed
+
+# Optional: Rich terminal output
+rich>=13.0.0
