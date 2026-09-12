@@ -6,7 +6,7 @@ defaults:
   - paths: default
   - attributes: default
   - data: celeba_hq
-  - optional experiment: null
+  - experiments: null
 
 # Experiment metadata
 experiment:
@@ -43,11 +43,11 @@ dataloader:
   drop_last: true
   persistent_workers: true
 
-# Logging
+# Logging is opt-in; the data smoke run never needs an online service.
 logging:
-  project: "styleformer"
-  entity: null  # W&B entity
-  offline: false
+  project: null  # Set a project to enable W&B (requires the logging extra).
+  entity: null
+  offline: true
   log_images_every_n_steps: 500
 
 # Hardware
@@ -55,3 +55,11 @@ hardware:
   accelerator: "auto"
   devices: 1
   strategy: "auto"
+
+hydra:
+  job:
+    chdir: false
+  help:
+    app_name: StyleFormer data smoke check
+    header: |
+      Loads the configured dataset and inspects one batch. No model is trained.

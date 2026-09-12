@@ -1,26 +1,23 @@
-"""PyTorch Lightning DataModule for face datasets."""
+"""Lightning data module for extracted face image datasets."""
 
 from pathlib import Path
 from typing import Any
 
 import lightning as L
+import torch
+from hydra.utils import to_absolute_path
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader
 
 from src.data.datasets import CelebAHQDataset, CelebAHQPairedDataset, FFHQDataset
-from src.data.transforms import get_train_transforms, get_val_transforms
+from src.data.datasets.base import split_indices
+from src.data.datasets.celeba_hq import CELEBA_ATTRIBUTES
+from src.data.transforms import get_train_transforms
 
 
 class FaceDataModule(L.LightningDataModule):
-    """Lightning DataModule for face transformation experiments.
-    
-    Supports:
-    - CelebA-HQ with multi-attribute labels
-    - FFHQ (unconditional)
-    - Paired datasets for style transfer
-    - Configurable via Hydra
-    """
-    
+    """Create consistent train/validation/test partitions and predict on test data."""
+
     def __init__(
         self,
         name: str = "celeba_hq",
@@ -31,265 +28,214 @@ class FaceDataModule(L.LightningDataModule):
         pin_memory: bool = True,
         drop_last: bool = True,
         persistent_workers: bool = True,
-        # Attribute configuration
         selected_attrs: list[str] | None = None,
         filter_attrs: dict[str, int] | None = None,
-        # Pairing configuration
         pairing_enabled: bool = False,
         pairing_mode: str = "opposite",
         transfer_attr: str = "Male",
         preserve_attrs: list[str] | None = None,
-        # Split ratios
         train_ratio: float = 0.8,
         val_ratio: float = 0.1,
-        # Augmentation
-        train_augmentation: dict[str, bool] | None = None,
-        val_augmentation: dict[str, bool] | None = None,
+        train_augmentation: dict[str, Any] | None = None,
+        val_augmentation: dict[str, Any] | None = None,
+        seed: int = 42,
+        split_seed: int | None = None,
+        attribute_file: str | Path | None = None,
+        mapping_file: str | Path | None = None,
+        partition_file: str | Path | None = None,
     ) -> None:
-        """Initialize FaceDataModule.
-        
-        Args:
-            name: Dataset name ("celeba_hq" or "ffhq").
-            root: Root directory of the dataset.
-            image_size: Target image size.
-            batch_size: Batch size for dataloaders.
-            num_workers: Number of dataloader workers.
-            pin_memory: Pin memory for faster GPU transfer.
-            drop_last: Drop last incomplete batch.
-            persistent_workers: Keep workers alive between epochs.
-            selected_attrs: Attributes to include (CelebA-HQ only).
-            filter_attrs: Filter dataset by attributes.
-            pairing_enabled: Enable paired sampling for style transfer.
-            pairing_mode: Pairing mode ("opposite", "random", "matched").
-            transfer_attr: Attribute to transfer in pairs.
-            preserve_attrs: Attributes to preserve in pairs.
-            train_ratio: Training data ratio.
-            val_ratio: Validation data ratio.
-            train_augmentation: Training augmentation settings.
-            val_augmentation: Validation augmentation settings.
-        """
         super().__init__()
+        if name not in {"celeba_hq", "ffhq"}:
+            raise ValueError(f"Unknown dataset: {name}")
+        if pairing_mode not in {"opposite", "matched", "random"}:
+            raise ValueError(f"Unknown pairing mode: {pairing_mode}")
+        if name == "ffhq" and (
+            pairing_enabled
+            or selected_attrs
+            or filter_attrs
+            or attribute_file
+            or mapping_file
+            or partition_file
+        ):
+            raise ValueError(
+                "FFHQ is unlabeled: attribute metadata, filtering, and pairing are unsupported"
+            )
+        if batch_size <= 0 or num_workers < 0 or image_size <= 0:
+            raise ValueError(
+                "batch_size and image_size must be positive; num_workers must be nonnegative"
+            )
         self.save_hyperparameters()
-        
-        self.name = name
-        self.root = Path(root)
-        self.image_size = image_size
-        self.batch_size = batch_size
-        self.num_workers = num_workers
-        self.pin_memory = pin_memory
-        self.drop_last = drop_last
+        self.name, self.root, self.image_size = name, Path(root), image_size
+        self.batch_size, self.num_workers = batch_size, num_workers
+        self.pin_memory, self.drop_last = pin_memory, drop_last
         self.persistent_workers = persistent_workers
-        
-        self.selected_attrs = selected_attrs
+        self.selected_attrs = None if selected_attrs is None else list(selected_attrs)
         self.filter_attrs = filter_attrs
-        
-        self.pairing_enabled = pairing_enabled
-        self.pairing_mode = pairing_mode
-        self.transfer_attr = transfer_attr
-        self.preserve_attrs = preserve_attrs
-        
-        self.train_ratio = train_ratio
-        self.val_ratio = val_ratio
-        
-        # Default augmentation settings
-        self.train_augmentation = train_augmentation or {
-            "horizontal_flip": True,
-            "color_jitter": True,
-            "random_crop": False,
-        }
-        self.val_augmentation = val_augmentation or {
+        self.pairing_enabled, self.pairing_mode = pairing_enabled, pairing_mode
+        self.transfer_attr, self.preserve_attrs = transfer_attr, preserve_attrs
+        self.train_ratio, self.val_ratio, self.seed = train_ratio, val_ratio, seed
+        self.split_seed = seed if split_seed is None else split_seed
+        split_indices(0, "train", train_ratio, val_ratio, self.split_seed)
+        self.attribute_file, self.mapping_file, self.partition_file = (
+            attribute_file,
+            mapping_file,
+            partition_file,
+        )
+        self.train_augmentation = (
+            dict(train_augmentation)
+            if train_augmentation is not None
+            else {
+                "horizontal_flip": True,
+                "color_jitter": True,
+                "random_crop": False,
+            }
+        )
+        self.val_augmentation = dict(val_augmentation) if val_augmentation is not None else {}
+        self.train_dataset = self.val_dataset = self.test_dataset = self.predict_dataset = None
+
+    @classmethod
+    def from_config(cls, cfg: DictConfig) -> "FaceDataModule":
+        """Construct from optional dataset sections and shared dataloader settings."""
+        data = cfg.data
+        loader = cfg.get("dataloader", {})
+        attributes = data.get("attributes") or {}
+        pairing = data.get("pairing") or {}
+        splits = data.get("splits") or {}
+        augmentation = data.get("augmentation") or {}
+        definitions = cfg.get("attributes", {}).get("definitions", {})
+
+        def annotation_name(name: str) -> str:
+            return definitions.get(name, {}).get("celeba_attr", name)
+
+        selected = attributes.get("selected")
+        filters = attributes.get("filter")
+        preserve = pairing.get("preserve_attrs")
+        return cls(
+            name=data.get("name", "celeba_hq"),
+            root=to_absolute_path(data.get("root", "./data/celeba_hq")),
+            image_size=data.get("image_size", 256),
+            batch_size=loader.get("batch_size", 16),
+            num_workers=loader.get("num_workers", 4),
+            pin_memory=loader.get("pin_memory", True),
+            drop_last=loader.get("drop_last", True),
+            persistent_workers=loader.get("persistent_workers", True),
+            selected_attrs=None
+            if selected is None
+            else [annotation_name(name) for name in selected],
+            filter_attrs=None
+            if filters is None
+            else {annotation_name(name): value for name, value in filters.items()},
+            pairing_enabled=pairing.get("enabled", False),
+            pairing_mode=pairing.get("mode", "opposite"),
+            transfer_attr=annotation_name(pairing.get("transfer_attr", "Male")),
+            preserve_attrs=None
+            if preserve is None
+            else [annotation_name(name) for name in preserve],
+            train_ratio=splits.get("train", 0.8),
+            val_ratio=splits.get("val", 0.1),
+            train_augmentation=augmentation.get("train"),
+            val_augmentation=augmentation.get("val"),
+            seed=data.get("seed", cfg.get("seed", cfg.get("experiment", {}).get("seed", 42))),
+            split_seed=data.get("split_seed"),
+            attribute_file=data.get("attribute_file"),
+            mapping_file=data.get("mapping_file"),
+            partition_file=data.get("partition_file"),
+        )
+
+    def prepare_data(self) -> None:
+        """Datasets must be downloaded and extracted separately."""
+        if not self.root.is_dir():
+            raise FileNotFoundError(f"Dataset directory not found: {self.root}")
+
+    def _dataset(self, split: str):
+        options = self.train_augmentation if split == "train" else self.val_augmentation
+        # An explicit empty augmentation mapping means no random augmentation.
+        augmentation = {
             "horizontal_flip": False,
             "color_jitter": False,
             "random_crop": False,
+            **options,
         }
-        
-        # Will be set in setup()
-        self.train_dataset = None
-        self.val_dataset = None
-        self.test_dataset = None
-    
-    @classmethod
-    def from_config(cls, cfg: DictConfig) -> "FaceDataModule":
-        """Create DataModule from Hydra config.
-        
-        Args:
-            cfg: Hydra configuration with 'data' section.
-            
-        Returns:
-            Configured FaceDataModule instance.
-        """
-        data_cfg = cfg.data
-        
-        return cls(
-            name=data_cfg.get("name", "celeba_hq"),
-            root=data_cfg.get("root", "./data/celeba_hq"),
-            image_size=data_cfg.get("image_size", 256),
-            batch_size=cfg.dataloader.get("batch_size", 16),
-            num_workers=cfg.dataloader.get("num_workers", 4),
-            pin_memory=cfg.dataloader.get("pin_memory", True),
-            drop_last=cfg.dataloader.get("drop_last", True),
-            persistent_workers=cfg.dataloader.get("persistent_workers", True),
-            selected_attrs=data_cfg.attributes.get("selected"),
-            filter_attrs=data_cfg.attributes.get("filter"),
-            pairing_enabled=data_cfg.pairing.get("enabled", False),
-            pairing_mode=data_cfg.pairing.get("mode", "opposite"),
-            transfer_attr=data_cfg.pairing.get("transfer_attr", "Male"),
-            preserve_attrs=data_cfg.pairing.get("preserve_attrs"),
-            train_ratio=data_cfg.splits.get("train", 0.8),
-            val_ratio=data_cfg.splits.get("val", 0.1),
-            train_augmentation=dict(data_cfg.augmentation.get("train", {})),
-            val_augmentation=dict(data_cfg.augmentation.get("val", {})),
+        common = dict(
+            root=self.root,
+            split=split,
+            transform=get_train_transforms(self.image_size, **augmentation),
+            train_ratio=self.train_ratio,
+            val_ratio=self.val_ratio,
+            seed=self.split_seed,
         )
-    
-    def prepare_data(self) -> None:
-        """Download or prepare data (called on single process)."""
-        # Check if dataset exists
-        if not self.root.exists():
-            raise FileNotFoundError(
-                f"Dataset directory not found: {self.root}. "
-                f"Please download the {self.name} dataset first."
+        if self.name == "ffhq":
+            return FFHQDataset(**common)
+        common.update(
+            selected_attrs=self.selected_attrs,
+            filter_attrs=self.filter_attrs,
+            attribute_file=self.attribute_file,
+            mapping_file=self.mapping_file,
+            partition_file=self.partition_file,
+        )
+        if self.pairing_enabled:
+            return CelebAHQPairedDataset(
+                **common,
+                pairing_mode=self.pairing_mode,
+                transfer_attr=self.transfer_attr,
+                preserve_attrs=self.preserve_attrs,
             )
-    
+        return CelebAHQDataset(**common)
+
     def setup(self, stage: str | None = None) -> None:
-        """Set up datasets for each stage.
-        
-        Args:
-            stage: "fit", "validate", "test", or "predict".
-        """
-        # Build transforms
-        train_transform = get_train_transforms(
-            image_size=self.image_size,
-            **self.train_augmentation,
+        """Support independent Lightning stages without rebuilding existing datasets."""
+        if stage not in {None, "fit", "validate", "test", "predict"}:
+            raise ValueError(f"Unknown stage: {stage}")
+        if stage in {None, "fit"} and self.train_dataset is None:
+            self.train_dataset = self._dataset("train")
+        if stage in {None, "fit", "validate"} and self.val_dataset is None:
+            self.val_dataset = self._dataset("val")
+        if stage in {None, "test", "predict"} and self.test_dataset is None:
+            self.test_dataset = self._dataset("test")
+        if stage in {None, "predict"}:
+            self.predict_dataset = self.test_dataset
+
+    def _loader(self, dataset, training: bool = False) -> DataLoader:
+        if dataset is None:
+            raise RuntimeError("Call setup() for this dataloader's stage first")
+        if training and not len(dataset):
+            raise ValueError(
+                "Training split has no eligible samples; check splits, filters, and pairing constraints"
+            )
+        return DataLoader(
+            dataset,
+            batch_size=self.batch_size,
+            shuffle=training,
+            num_workers=self.num_workers,
+            pin_memory=self.pin_memory,
+            drop_last=self.drop_last if training else False,
+            persistent_workers=self.persistent_workers and self.num_workers > 0,
+            generator=torch.Generator().manual_seed(self.seed),
         )
-        val_transform = get_val_transforms(
-            image_size=self.image_size,
-        )
-        
-        if stage == "fit" or stage is None:
-            if self.name == "celeba_hq":
-                if self.pairing_enabled:
-                    self.train_dataset = CelebAHQPairedDataset(
-                        root=self.root,
-                        split="train",
-                        transform=train_transform,
-                        transfer_attr=self.transfer_attr,
-                        preserve_attrs=self.preserve_attrs,
-                        selected_attrs=self.selected_attrs,
-                    )
-                    self.val_dataset = CelebAHQPairedDataset(
-                        root=self.root,
-                        split="val",
-                        transform=val_transform,
-                        transfer_attr=self.transfer_attr,
-                        preserve_attrs=self.preserve_attrs,
-                        selected_attrs=self.selected_attrs,
-                    )
-                else:
-                    self.train_dataset = CelebAHQDataset(
-                        root=self.root,
-                        split="train",
-                        transform=train_transform,
-                        selected_attrs=self.selected_attrs,
-                        filter_attrs=self.filter_attrs,
-                        train_ratio=self.train_ratio,
-                        val_ratio=self.val_ratio,
-                    )
-                    self.val_dataset = CelebAHQDataset(
-                        root=self.root,
-                        split="val",
-                        transform=val_transform,
-                        selected_attrs=self.selected_attrs,
-                        filter_attrs=self.filter_attrs,
-                        train_ratio=self.train_ratio,
-                        val_ratio=self.val_ratio,
-                    )
-            elif self.name == "ffhq":
-                self.train_dataset = FFHQDataset(
-                    root=self.root,
-                    split="train",
-                    transform=train_transform,
-                    train_ratio=self.train_ratio,
-                    val_ratio=self.val_ratio,
-                )
-                self.val_dataset = FFHQDataset(
-                    root=self.root,
-                    split="val",
-                    transform=val_transform,
-                    train_ratio=self.train_ratio,
-                    val_ratio=self.val_ratio,
-                )
-            else:
-                raise ValueError(f"Unknown dataset: {self.name}")
-        
-        if stage == "test" or stage is None:
-            if self.name == "celeba_hq":
-                self.test_dataset = CelebAHQDataset(
-                    root=self.root,
-                    split="test",
-                    transform=val_transform,
-                    selected_attrs=self.selected_attrs,
-                    filter_attrs=self.filter_attrs,
-                    train_ratio=self.train_ratio,
-                    val_ratio=self.val_ratio,
-                )
-            elif self.name == "ffhq":
-                self.test_dataset = FFHQDataset(
-                    root=self.root,
-                    split="test",
-                    transform=val_transform,
-                    train_ratio=self.train_ratio,
-                    val_ratio=self.val_ratio,
-                )
-    
+
     def train_dataloader(self) -> DataLoader:
-        """Get training dataloader."""
-        return DataLoader(
-            self.train_dataset,
-            batch_size=self.batch_size,
-            shuffle=True,
-            num_workers=self.num_workers,
-            pin_memory=self.pin_memory,
-            drop_last=self.drop_last,
-            persistent_workers=self.persistent_workers if self.num_workers > 0 else False,
-        )
-    
+        return self._loader(self.train_dataset, training=True)
+
     def val_dataloader(self) -> DataLoader:
-        """Get validation dataloader."""
-        return DataLoader(
-            self.val_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
-            pin_memory=self.pin_memory,
-            drop_last=False,
-            persistent_workers=self.persistent_workers if self.num_workers > 0 else False,
-        )
-    
+        return self._loader(self.val_dataset)
+
     def test_dataloader(self) -> DataLoader:
-        """Get test dataloader."""
-        if self.test_dataset is None:
-            return None
-        return DataLoader(
-            self.test_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
-            pin_memory=self.pin_memory,
-            drop_last=False,
-        )
-    
+        return self._loader(self.test_dataset)
+
+    def predict_dataloader(self) -> DataLoader:
+        return self._loader(self.predict_dataset)
+
     @property
     def num_attributes(self) -> int:
-        """Number of selected attributes."""
-        if self.selected_attrs:
-            return len(self.selected_attrs)
-        if self.name == "celeba_hq":
-            return 40  # All CelebA attributes
-        return 0
-    
+        return len(self.attribute_names)
+
     @property
     def attribute_names(self) -> list[str]:
-        """Names of selected attributes."""
-        if self.selected_attrs:
+        if self.name == "ffhq":
+            return []
+        for dataset in (self.train_dataset, self.val_dataset, self.test_dataset):
+            if dataset is not None:
+                return dataset.attribute_names
+        if self.selected_attrs is not None:
             return self.selected_attrs
-        return []
+        return [self.transfer_attr] if self.pairing_enabled else list(CELEBA_ATTRIBUTES)

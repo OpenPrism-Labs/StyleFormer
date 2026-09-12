@@ -13,21 +13,24 @@ def setup_logging(
     name: str = "styleformer",
 ) -> logging.Logger:
     """Set up logging with rich console output.
-    
+
     Args:
         level: Logging level.
         log_file: Optional file to write logs to.
         name: Logger name.
-        
+
     Returns:
         Configured logger.
     """
     logger = logging.getLogger(name)
     logger.setLevel(level)
-    
-    # Clear existing handlers
-    logger.handlers.clear()
-    
+
+    # Release resources when reconfiguring this logger.
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+        handler.close()
+    logger.propagate = False
+
     # Rich console handler
     console_handler = RichHandler(
         rich_tracebacks=True,
@@ -37,30 +40,28 @@ def setup_logging(
     )
     console_handler.setLevel(level)
     logger.addHandler(console_handler)
-    
+
     # File handler (optional)
     if log_file:
         log_file = Path(log_file)
         log_file.parent.mkdir(parents=True, exist_ok=True)
-        
+
         file_handler = logging.FileHandler(log_file)
         file_handler.setLevel(level)
         file_handler.setFormatter(
-            logging.Formatter(
-                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-            )
+            logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
         )
         logger.addHandler(file_handler)
-    
+
     return logger
 
 
 def get_logger(name: str = "styleformer") -> logging.Logger:
     """Get a logger instance.
-    
+
     Args:
         name: Logger name.
-        
+
     Returns:
         Logger instance.
     """
@@ -76,7 +77,7 @@ def setup_wandb(
     offline: bool = False,
 ) -> Any:
     """Initialize Weights & Biases logging.
-    
+
     Args:
         project: W&B project name.
         config: Configuration dictionary.
@@ -84,17 +85,15 @@ def setup_wandb(
         name: Run name.
         tags: Run tags.
         offline: Run in offline mode.
-        
+
     Returns:
         W&B run object.
     """
     try:
         import wandb
     except ImportError:
-        raise ImportError(
-            "wandb not installed. Install with: pip install wandb"
-        )
-    
+        raise ImportError('W&B logging requires: python -m pip install -e ".[logging]"') from None
+
     run = wandb.init(
         project=project,
         entity=entity,
@@ -103,5 +102,5 @@ def setup_wandb(
         config=config,
         mode="offline" if offline else "online",
     )
-    
+
     return run

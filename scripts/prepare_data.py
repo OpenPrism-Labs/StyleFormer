@@ -1,193 +1,128 @@
-"""Dataset preparation and download utilities."""
+"""Manual dataset setup instructions and loader-compatible integrity checks."""
 
 import argparse
 import logging
 import os
+import shlex
 from pathlib import Path
 
 from rich.logging import RichHandler
 
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(message)s",
-    handlers=[RichHandler(rich_tracebacks=True)],
-)
 log = logging.getLogger(__name__)
 
 
 def download_celeba_hq(output_dir: Path) -> None:
-    """Download CelebA-HQ dataset.
-    
-    Note: CelebA-HQ requires manual download due to licensing.
-    This function provides instructions.
-    """
-    log.info("=" * 60)
-    log.info("CelebA-HQ Dataset Setup")
-    log.info("=" * 60)
-    log.info("")
-    log.info("CelebA-HQ requires manual download. Follow these steps:")
-    log.info("")
-    log.info("Option 1: From Google Drive (official)")
-    log.info("  1. Go to: https://github.com/tkarras/progressive_growing_of_gans")
-    log.info("  2. Download 'CelebA-HQ' from the Google Drive link")
-    log.info(f"  3. Extract to: {output_dir}")
-    log.info("")
-    log.info("Option 2: Using kaggle CLI")
-    log.info("  kaggle datasets download -d lamsimon/celebahq")
-    log.info(f"  unzip celebahq.zip -d {output_dir}")
-    log.info("")
-    log.info("Required files:")
-    log.info(f"  {output_dir}/")
-    log.info("    images/")
-    log.info("      000001.jpg")
-    log.info("      000002.jpg")
-    log.info("      ...")
-    log.info("    list_attr_celeba.txt")
-    log.info("")
-    
-    # Create directory structure
+    """Show manual setup instructions; no data is downloaded."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "images").mkdir(exist_ok=True)
+    log.info("CelebA-HQ requires manual setup; no data has been downloaded.")
+    log.info("Official source: https://github.com/tkarras/progressive_growing_of_gans")
+    log.info("Extract decoded JPG/PNG images into %s/images/", output_dir)
+    log.info("TFRecords and archives are not supported directly.")
+    log.info("Provide CelebAMask-HQ-attribute-anno.txt for HQ-indexed labels, or")
+    log.info("list_attr_celeba.txt plus CelebA-HQ-to-CelebA-mapping.txt (or image_list.txt)")
+    log.info("to map HQ image indices to original CelebA filenames.")
+    log.info("Original CelebA images in img_align_celeba/ use original labels directly.")
+    log.info("Attribute annotations are required by the CelebA-HQ loader.")
 
 
 def download_ffhq(output_dir: Path) -> None:
-    """Download FFHQ dataset.
-    
-    Note: FFHQ requires manual download due to size.
-    This function provides instructions.
-    """
-    log.info("=" * 60)
-    log.info("FFHQ Dataset Setup")
-    log.info("=" * 60)
-    log.info("")
-    log.info("FFHQ (70,000 images at 1024x1024) requires manual download.")
-    log.info("")
-    log.info("Option 1: Official download script")
-    log.info("  git clone https://github.com/NVlabs/ffhq-dataset")
-    log.info("  cd ffhq-dataset")
-    log.info(f"  python download_ffhq.py --images -o {output_dir}")
-    log.info("")
-    log.info("Option 2: Kaggle (256x256 version)")
-    log.info("  kaggle datasets download -d arnaud58/flickrfaceshq-dataset-ffhq")
-    log.info(f"  unzip flickrfaceshq-dataset-ffhq.zip -d {output_dir}")
-    log.info("")
-    log.info("Required structure:")
-    log.info(f"  {output_dir}/")
-    log.info("    00000/")
-    log.info("      00000.png")
-    log.info("      00001.png")
-    log.info("      ...")
-    log.info("    00001/")
-    log.info("      01000.png")
-    log.info("      ...")
-    log.info("")
-    
-    # Create directory structure
+    """Show manual FFHQ download instructions; no data is downloaded."""
     output_dir.mkdir(parents=True, exist_ok=True)
+    log.info("FFHQ requires manual setup; no data has been downloaded.")
+    log.info("Official source: https://github.com/NVlabs/ffhq-dataset")
+    log.info("Download the official script and its dependencies, then run:")
+    log.info("  cd %s", shlex.quote(str(output_dir.resolve())))
+    log.info("  python /absolute/path/to/download_ffhq.py --json --images")
+    log.info("The official script downloads into the current directory (no -o flag).")
+    log.info("Supported: flat or recursively nested PNG/JPG/JPEG images, including")
+    log.info("images1024x1024/00000/00000.png. Extract ZIPs first; TFRecords are unsupported.")
+    log.info("Keep only the desired aligned image collection under the dataset root.")
 
 
 def verify_dataset(dataset_dir: Path, dataset_name: str) -> bool:
-    """Verify dataset is properly set up.
-    
-    Args:
-        dataset_dir: Directory containing dataset.
-        dataset_name: Name of dataset ("celeba_hq" or "ffhq").
-        
-    Returns:
-        True if dataset is valid.
+    """Check loader metadata and decode all images included across its splits.
+
+    This checks local usability, not official dataset completeness or checksums.
+    CelebA-HQ requires valid annotations and, for original labels, an HQ mapping.
     """
-    if not dataset_dir.exists():
-        log.error(f"Dataset directory not found: {dataset_dir}")
+    if not dataset_dir.is_dir():
+        log.error("Dataset directory not found: %s", dataset_dir)
         return False
-    
-    if dataset_name == "celeba_hq":
-        # Check for images
-        img_dirs = ["images", "img_align_celeba", "CelebA-HQ"]
-        has_images = any((dataset_dir / d).exists() for d in img_dirs)
-        
-        if not has_images:
-            log.error("No image directory found (expected 'images/' or 'img_align_celeba/')")
-            return False
-        
-        # Check for attributes
-        attr_file = dataset_dir / "list_attr_celeba.txt"
-        if not attr_file.exists():
-            log.warning("Attribute file not found: list_attr_celeba.txt")
-            log.warning("Dataset will work but without attribute labels.")
-        
-        # Count images
-        for d in img_dirs:
-            img_dir = dataset_dir / d
-            if img_dir.exists():
-                n_images = len(list(img_dir.glob("*.jpg"))) + len(list(img_dir.glob("*.png")))
-                log.info(f"Found {n_images} images in {img_dir}")
-                break
-        
-        return True
-    
-    elif dataset_name == "ffhq":
-        # Check for images (nested or flat)
-        subdirs = [d for d in dataset_dir.iterdir() if d.is_dir()]
-        
-        if subdirs and subdirs[0].name.isdigit():
-            # Nested structure
-            n_images = sum(
-                len(list(d.glob("*.png"))) + len(list(d.glob("*.jpg")))
-                for d in subdirs
-            )
-        else:
-            # Flat structure
-            n_images = len(list(dataset_dir.glob("*.png"))) + len(list(dataset_dir.glob("*.jpg")))
-        
-        log.info(f"Found {n_images} images")
-        return n_images > 0
-    
-    return False
+    if dataset_name not in {"celeba_hq", "ffhq"}:
+        log.error("Unsupported dataset: %s", dataset_name)
+        return False
 
+    from PIL import Image
 
-def main():
-    """Main entry point."""
-    parser = argparse.ArgumentParser(description="Prepare datasets for StyleFormer")
-    parser.add_argument(
-        "--dataset",
-        type=str,
-        choices=["celeba_hq", "ffhq", "all"],
-        default="all",
-        help="Dataset to prepare",
+    from src.data.datasets.celeba_hq import CelebAHQDataset
+    from src.data.datasets.ffhq import FFHQDataset
+
+    try:
+        image_paths: set[Path] = set()
+        for split in ("train", "val", "test"):
+            if dataset_name == "celeba_hq":
+                dataset = CelebAHQDataset(root=dataset_dir, split=split)
+                image_paths.update(dataset.image_dir / name for name in dataset.filenames)
+            else:
+                dataset = FFHQDataset(root=dataset_dir, split=split)
+                image_paths.update(dataset.image_paths)
+        if not image_paths:
+            raise ValueError("No usable images found")
+        for path in sorted(image_paths):
+            try:
+                with Image.open(path) as image:
+                    image.load()
+            except (OSError, ValueError) as exc:
+                raise ValueError(f"Cannot decode image {path}: {exc}") from exc
+    except (OSError, ValueError, KeyError) as exc:
+        log.error("%s verification failed: %s", dataset_name, exc)
+        return False
+
+    log.info(
+        "Verified %d loader-visible images and dataset metadata in %s",
+        len(image_paths),
+        dataset_dir,
     )
+    log.info("Local usability only: no official completeness or checksum guarantee.")
+    return True
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Show instructions or return a nonzero status for any failed verification."""
+    parser = argparse.ArgumentParser(
+        description="Show manual dataset setup instructions (no download), or verify local usability."
+    )
+    parser.add_argument("--dataset", choices=["celeba_hq", "ffhq", "all"], default="all")
     parser.add_argument(
         "--data-dir",
-        type=str,
-        default="./data",
-        help="Root data directory",
+        type=Path,
+        default=Path(os.environ.get("STYLEFORMER_ROOT", ".")) / "data",
+        help="Data root; relative paths use the invocation directory (default: STYLEFORMER_ROOT/data or ./data)",
     )
     parser.add_argument(
         "--verify",
         action="store_true",
-        help="Only verify existing datasets",
+        help="Validate loader metadata and decode all loader-visible images; failures exit nonzero",
     )
-    
-    args = parser.parse_args()
-    data_dir = Path(args.data_dir)
-    
+    args = parser.parse_args(argv)
+    logging.basicConfig(
+        level=logging.INFO, format="%(message)s", handlers=[RichHandler(rich_tracebacks=True)]
+    )
+    data_dir = args.data_dir.expanduser().resolve()
     datasets = ["celeba_hq", "ffhq"] if args.dataset == "all" else [args.dataset]
-    
+    success = True
     for dataset in datasets:
         dataset_dir = data_dir / dataset
-        
         if args.verify:
-            log.info(f"Verifying {dataset}...")
-            if verify_dataset(dataset_dir, dataset):
-                log.info(f"{dataset}: OK")
-            else:
-                log.error(f"{dataset}: FAILED")
+            valid = verify_dataset(dataset_dir, dataset)
+            log.info("%s: %s", dataset, "OK" if valid else "FAILED")
+            success = valid and success
+        elif dataset == "celeba_hq":
+            download_celeba_hq(dataset_dir)
         else:
-            if dataset == "celeba_hq":
-                download_celeba_hq(dataset_dir)
-            elif dataset == "ffhq":
-                download_ffhq(dataset_dir)
+            download_ffhq(dataset_dir)
+    return 0 if success else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

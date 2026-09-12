@@ -5,6 +5,9 @@ _target_: src.data.datamodule.FaceDataModule
 
 name: celeba_hq
 root: ${paths.celeba_hq_dir}
+attribute_file: null  # Relative to dataset root; auto-detected when null.
+mapping_file: null  # HQ-to-original CelebA mapping, when using original labels.
+partition_file: null  # Original CelebA partition file; auto-detected when null.
 
 # Image settings
 image_size: 256

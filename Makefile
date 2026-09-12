@@ -1,4 +1,4 @@
-.PHONY: install dev-install test lint format clean train prepare-data
+.PHONY: install dev-install test test-cov lint format clean clean-outputs train train-multi-attr prepare-data verify-data help
 
 # Installation
 install:
@@ -6,7 +6,6 @@ install:
 
 dev-install:
 	pip install -e ".[dev]"
-	pre-commit install
 
 # Code quality
 lint:
@@ -24,12 +23,12 @@ test:
 test-cov:
 	pytest tests/ -v --cov=src --cov-report=html
 
-# Training
+# Data smoke checks (no model training)
 train:
 	python scripts/train.py
 
 train-multi-attr:
-	python scripts/train.py experiment=multi_attr
+	python scripts/train.py experiments=multi_attr
 
 # Data
 prepare-data:
@@ -61,8 +60,8 @@ help:
 	@echo "  lint           - Run linters"
 	@echo "  format         - Format code"
 	@echo "  test           - Run tests"
-	@echo "  train          - Run training (default config)"
-	@echo "  train-multi-attr - Run multi-attribute training"
+	@echo "  train          - Inspect one data batch (no model training)"
+	@echo "  train-multi-attr - Inspect multi-attribute data (no model training)"
 	@echo "  prepare-data   - Show dataset download instructions"
 	@echo "  verify-data    - Verify datasets"
 	@echo "  clean          - Clean build artifacts"

@@ -1,346 +1,175 @@
 # StyleFormer
 
-**Face Transformation with Multi-Attribute Style Transfer**
+Face-transformation **research infrastructure** built with PyTorch, Lightning and Hydra.
 
-A modular experimental framework for face transformation research, supporting simultaneous manipulation of multiple facial attributes (age, gender, etc.) using StyleGAN latent space editing.
+## Implemented status
 
----
+- CelebA-HQ/CelebA-format labeled image loading and FFHQ loading.
+- Attribute filtering, opposite-attribute pairing, image transforms and Lightning DataLoaders.
+- Composable experiment configuration, dataset verification, checkpoint and visualization utilities.
 
-## Features
-
-- **Multi-Attribute Transformation**: Manipulate age and gender simultaneously with disentanglement constraints
-- **Flexible Data Pipeline**: PyTorch Lightning DataModule with CelebA-HQ (labeled) and FFHQ (unlabeled) support
-- **Paired Dataset Mode**: Automatic pairing of images with opposite attributes for style transfer training
-- **Hydra Configuration**: Composable YAML configs for reproducible experiments
-- **Modular Architecture**: Clean separation of infrastructure (provided) and models (student-implemented)
-
----
+**Not implemented:** face transformation, GAN inversion, generators, losses, latent-direction estimation or a training loop. `scripts/train.py` is a data-pipeline smoke check, despite its historical name. The multi-attribute config describes an experiment; it does not implement simultaneous editing or disentanglement. See [the model integration guide](src/models/README.md) and [research proposal](idea.md).
 
 ## Installation
 
-### Prerequisites
+Python 3.10+ is declared supported; Python 3.12 is the Conda environment default. The available PyTorch wheels may impose a newer Python minimum. CPU is sufficient for data checks; an NVIDIA GPU or CUDA toolkit is not required.
 
-- Python 3.10+
-- CUDA 11.8+ (for GPU training)
-- Conda (recommended)
-
-### Setup
+From a checkout:
 
 ```bash
-# Clone repository
-git clone https://github.com/OpenPrism-Labs/StyleFormer.git
-cd StyleFormer
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
 
-# Create conda environment
+# CPU example (Linux/Windows): install a matching pair from the same index.
+python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+python -m pip install -e '.[dev]'
+```
+
+For CUDA, ROCm or other accelerators, replace the CPU command with the platform-specific command from [PyTorch's installation selector](https://pytorch.org/get-started/locally/). Do not mix independently chosen torch/torchvision versions or assume CUDA 11.8 is still the appropriate runtime. Binary wheels supply their runtime dependencies; local CUDA development tools are needed separately for extensions that compile CUDA code.
+
+Alternatively, from the repository root:
+
+```bash
 conda env create -f environment.yaml
 conda activate styleformer
-
-# Install package in development mode
-pip install -e .
-
-# (Optional) Install dev dependencies
-pip install -e ".[dev]"
 ```
 
----
+This uses Conda for Python and pip for the package, not the discontinued official PyTorch Conda channel. It uses pip's default wheel selection; use the virtual-environment instructions when you want explicit accelerator selection before installing the project. See the [PyTorch 2.6 release announcement](https://pytorch.org/blog/pytorch2-6/) for the Conda distribution change.
 
-## Project Structure
-
-```
-StyleFormer/
-├── configs/                      # Hydra configuration files
-│   ├── base.yaml                 # Shared defaults
-│   ├── attributes/default.yaml   # Multi-attribute definitions
-│   ├── data/
-│   │   ├── celeba_hq.yaml       # CelebA-HQ dataset config
-│   │   └── ffhq.yaml            # FFHQ dataset config
-│   ├── experiments/
-│   │   └── multi_attr.yaml      # Multi-attribute experiment
-│   └── paths/default.yaml       # Dataset and output paths
-│
-├── src/                          # Source code
-│   ├── data/                     # Data loading infrastructure
-│   │   ├── datasets/            # Dataset implementations
-│   │   │   ├── base.py          # Abstract base classes
-│   │   │   ├── celeba_hq.py     # CelebA-HQ with attributes
-│   │   │   └── ffhq.py          # FFHQ dataset
-│   │   ├── datamodule.py        # PyTorch Lightning DataModule
-│   │   └── transforms.py        # Image augmentation pipelines
-│   ├── config/schema.py         # Configuration dataclasses
-│   ├── models/                  # Model implementations (TODO)
-│   │   └── README.md            # Implementation guide
-│   └── utils/                   # Utilities
-│       ├── io.py                # Checkpoint I/O
-│       ├── logging.py           # W&B and console logging
-│       └── visualization.py     # Image grid generation
-│
-├── scripts/                      # Entry points
-│   ├── train.py                 # Training script
-│   └── prepare_data.py          # Dataset preparation
-│
-├── data/                         # Datasets (gitignored)
-│   ├── celeba_hq/
-│   ├── ffhq/
-│   └── directions/              # Learned attribute directions
-│
-├── pretrained/                   # Pretrained weights (gitignored)
-├── outputs/                      # Experiment outputs (gitignored)
-└── notebooks/                    # Jupyter notebooks
-```
-
----
-
-## Quick Start
-
-### 1. Prepare Datasets
+W&B is optional:
 
 ```bash
-# Show download instructions
+python -m pip install -e '.[logging]'
+```
+
+OpenCV, pandas and einops are not used by the implemented code and are no longer mandatory dependencies. Model implementations may need their own dependencies later. Requirements are compatibility lower bounds, not an exact reproducible environment lock; record resolved versions with each experiment.
+
+The distribution is named `styleformer`; the existing Python import namespace is `src`. Repository scripts and Hydra configs are checkout workflows, not installed console commands.
+
+## Data preparation and smoke checks
+
+Run commands from the repository root after installation:
+
+```bash
+python scripts/prepare_data.py --help
 python scripts/prepare_data.py --dataset celeba_hq
+python scripts/prepare_data.py --dataset ffhq
 
-# Verify dataset after download
+# After obtaining the datasets, verify the files.
 python scripts/prepare_data.py --verify
-```
 
-### 2. Test Data Loading
-
-```bash
-# Run with default config (verifies data pipeline works)
+# Load real batches; this does not train a model.
 python scripts/train.py
+python scripts/train.py experiments=multi_attr
+python scripts/train.py data=ffhq dataloader.num_workers=0
+
+# Inspect configuration without loading a dataset.
+python scripts/train.py --cfg job --resolve
+python scripts/train.py experiments=multi_attr --cfg job --resolve
 ```
 
-### 3. Run Multi-Attribute Experiment
-
-```bash
-# Use the multi-attribute experiment config
-python scripts/train.py experiment=multi_attr
-```
-
----
-
-## Configuration
-
-StyleFormer uses [Hydra](https://hydra.cc/) for configuration management.
-
-### Override Config via CLI
-
-```bash
-# Change batch size and learning rate
-python scripts/train.py dataloader.batch_size=32 optimizer.lr=0.0002
-
-# Use FFHQ dataset instead of CelebA-HQ
-python scripts/train.py data=ffhq
-
-# Enable paired training mode
-python scripts/train.py data.pairing.enabled=true data.pairing.transfer_attr=Male
-```
-
-### Multi-Attribute Configuration
-
-Edit `configs/attributes/default.yaml`:
-
-```yaml
-# Active attributes for transformation
-active: ["age", "gender"]
-
-# Attribute definitions
-definitions:
-  age:
-    type: continuous
-    range: [-3.0, 3.0]
-    labels: ["young", "old"]
-    celeba_attr: "Young"
-    
-  gender:
-    type: continuous
-    range: [-3.0, 3.0]
-    labels: ["female", "male"]
-    celeba_attr: "Male"
-
-# Transformation settings
-transform:
-  mode: simultaneous          # Apply both at once
-  null_space_projection: true # Prevent attribute leakage
-  targets:
-    age: 2.5                  # Strength towards "old"
-    gender: -2.0              # Strength towards "female"
-```
-
----
+Datasets and pretrained weights are not bundled or automatically downloaded. Download instructions do not imply permission to redistribute images or use models commercially.
 
 ## Datasets
 
 ### CelebA-HQ
 
-High-quality celebrity faces with 40 attribute labels.
+[CelebA-HQ](https://github.com/tkarras/progressive_growing_of_gans) contains 30,000 high-quality images derived from CelebA. Its numeric HQ index is **not** the original CelebA filename. Original annotation and partition files must be joined through the official HQ-to-CelebA mapping. Alternatively, use annotation files already keyed by the exact image filenames.
 
-**Required structure:**
-```
-data/celeba_hq/
-├── images/                    # or img_align_celeba/
-│   ├── 000001.jpg
-│   ├── 000002.jpg
-│   └── ...
-├── list_attr_celeba.txt      # Attribute labels
-└── list_eval_partition.txt   # Train/val/test splits (optional)
-```
+The loader uses `images/`, with `img_align_celeba/` as an alternative for original CelebA-format layouts. Keep annotation files under the dataset root. Original CelebA has 40 binary annotations; `Young` is not chronological age and `Male` is an annotation, not a person's gender identity.
 
-**Download options:**
-- [Official CelebA-HQ](https://github.com/tkarras/progressive_growing_of_gans)
-- [Kaggle](https://www.kaggle.com/datasets/lamsimon/celebahq)
+Auto-detected annotation files, in preference order: `CelebAMask-HQ-attribute-anno.txt`, `list_attr_celeba.txt`, `attributes.txt`. These must use the CelebA count/header/`-1` or `1` text format. Mapping files are `CelebA-HQ-to-CelebA-mapping.txt` or `image_list.txt`, with `idx` and `orig_file` columns. An optional `list_eval_partition.txt` supplies official splits. With a mapping, partition keys refer to original filenames; missing entries are errors.
+
+Override locations with `data.attribute_file=...`, `data.mapping_file=...`, and `data.partition_file=...` (relative to the dataset root), or the equivalent `FaceDataModule` keyword arguments. Without official partitions, seeded splits are formed before filtering so filtering cannot move images between splits.
 
 ### FFHQ
 
-70,000 high-quality face images without attribute labels.
+[FFHQ](https://github.com/NVlabs/ffhq-dataset) contains 70,000 images without CelebA-style labels. Point the root at an image directory (flat or nested), not the parent of several duplicate resolution sets:
 
-**Required structure:**
-```
+```text
 data/ffhq/
-├── 00000/
-│   ├── 00000.png
-│   └── ...
-├── 00001/
-│   └── ...
-└── ...
+  00000/
+    00000.png
+    ...
+  01000/
+    01000.png
+    ...
 ```
 
-**Download:** [NVIDIA FFHQ](https://github.com/NVlabs/ffhq-dataset)
+Unlabeled batches have an empty attribute dimension. The current FFHQ loader does not accept pseudo-labels or support paired mode. Images are recursively discovered as PNG/JPG/JPEG; archives and TFRecords are not supported. Point the loader at extracted files. Observe the dataset's terms and individual image licenses.
 
----
+## Configuration and Python usage
 
-## Usage Examples
+```bash
+# These change data loading; optimizer settings are not consumed by a training loop.
+python scripts/train.py dataloader.batch_size=32
+python scripts/train.py data.pairing.enabled=true data.pairing.transfer_attr=Male
+```
 
-### Loading Data Programmatically
+Configuration groups live under `configs/`; root configuration is `configs/base.yaml`. Attribute targets and null-space-projection settings are reserved for a future model implementation.
+
+Use **`experiments=multi_attr`** (plural) to select the config group; `experiment` (singular) contains metadata such as `experiment.seed`. W&B defaults to disabled (`logging.project=null`); set a project to enable it, and `logging.offline=false` only when you intend to upload a run.
+
+Default data paths use `STYLEFORMER_ROOT` when set, otherwise the launch directory. Relative paths remain anchored to the launch directory even with Hydra directory changes. `--verify` exits nonzero for missing metadata, invalid mappings, missing images or corrupt images. Select one dataset with `--dataset ffhq` or `--dataset celeba_hq` if you do not have both.
 
 ```python
 from src.data import FaceDataModule
 
-# Create data module
 dm = FaceDataModule(
     name="celeba_hq",
     root="./data/celeba_hq",
     image_size=256,
     batch_size=16,
+    num_workers=0,
     selected_attrs=["Male", "Young"],
-    pairing_enabled=True,
-    transfer_attr="Male",
 )
-
-# Setup and get loaders
 dm.setup("fit")
-train_loader = dm.train_dataloader()
-
-# Iterate
-for batch in train_loader:
-    if dm.pairing_enabled:
-        source_imgs = batch["source_image"]      # [B, 3, 256, 256]
-        target_imgs = batch["target_image"]      # [B, 3, 256, 256]
-        source_attrs = batch["source_attributes"] # [B, num_attrs]
-    else:
-        imgs = batch["image"]
-        attrs = batch["attributes"]
+batch = next(iter(dm.train_dataloader()))
+images = batch["image"]
+attributes = batch["attributes"]
 ```
 
-### Filtering by Attributes
+Enable pairing with `pairing_enabled=True, transfer_attr="Male"`. Paired batches expose `source_image`, `target_image`, `source_attributes` and `target_attributes`. These are usually **different people** with opposite annotations, not identity-matched before/after images. A pixel loss against the paired target can therefore conflict with identity preservation.
 
-```python
-# Load only young males
-dm = FaceDataModule(
-    name="celeba_hq",
-    root="./data/celeba_hq",
-    filter_attrs={"Male": 1, "Young": 1},
-)
-```
+Training transforms are stochastic; validation/test transforms are deterministic. Default face normalization maps image intensities to `[-1, 1]`; denormalize before displaying them.
 
-### Using Transforms
+## Utilities
 
-```python
-from src.data.transforms import get_train_transforms, denormalize
+`src.utils.io` saves checkpoints and loads tensor state dictionaries with restricted `weights_only=True` deserialization. For a trusted legacy object checkpoint only, explicitly pass `weights_only=False`; this can execute arbitrary pickle code. See [PyTorch serialization guidance](https://docs.pytorch.org/docs/stable/notes/serialization.html). Pretrained-weight loading accepts plain state dictionaries or dictionaries containing `state_dict`/`model`; it is not a loader for arbitrary upstream `.pkl` models.
 
-# Get transforms
-transform = get_train_transforms(
-    image_size=256,
-    horizontal_flip=True,
-    color_jitter=True,
-)
-
-# Denormalize for visualization ([-1,1] -> [0,1])
-img_display = denormalize(img_tensor)
-```
-
----
-
-## For Students
-
-Model implementations go in `src/models/`. See [`src/models/README.md`](src/models/README.md) for detailed instructions.
-
-### Recommended Implementation Order
-
-1. **Encoder** (`src/models/encoders/`): Implement e4e or pSp for GAN inversion
-2. **Generator** (`src/models/generators/`): Load pretrained StyleGAN2/3
-3. **Losses** (`src/models/losses/`): LPIPS, identity (ArcFace), adversarial
-4. **Directions** (`src/models/directions/`): InterFaceGAN or GANSpace
-5. **Lightning Module** (`src/models/lightning_modules/`): Training logic
-
-### Example Model Config
-
-Create `configs/model/stylegan_e4e.yaml`:
-
-```yaml
-_target_: src.models.lightning_modules.transformer.FaceTransformer
-
-encoder:
-  _target_: src.models.encoders.e4e.E4EEncoder
-  input_size: 256
-
-generator:
-  _target_: src.models.generators.stylegan2.StyleGAN2Generator
-  pretrained: ${paths.pretrained_dir}/stylegan2-ffhq-256.pt
-
-learning_rate: 1e-4
-```
-
-Then run:
-```bash
-python scripts/train.py model=stylegan_e4e experiment=multi_attr
-```
-
----
+`src.utils.visualization` creates/saves image grids and optionally logs images to an initialized W&B run. Calling W&B helpers without the optional dependency raises an actionable error rather than silently dropping images.
 
 ## Development
 
 ```bash
-# Run linter
 make lint
-
-# Format code
 make format
-
-# Run tests
 make test
-
-# Clean build artifacts
-make clean
+make test-cov
 ```
 
----
+Tests use synthetic images; they do not require downloaded face datasets or pretrained weights. `make train` and `make train-multi-attr` run the historical smoke-check entry point, not training. `make clean-outputs` permanently removes experiment output directories; use deliberately.
 
-## References
+### Verified modernization scope
 
-### Papers
+Verified on Python 3.13 with CPU PyTorch 2.14.0, torchvision 0.29.0, Lightning 2.6.6, NumPy 2.5.2 and Hydra 1.3.6:
 
-- [StyleGAN2](https://arxiv.org/abs/1912.04958) - Karras et al.
-- [e4e](https://arxiv.org/abs/2102.02766) - Tov et al.
-- [InterFaceGAN](https://arxiv.org/abs/1907.10786) - Shen et al.
-- [GANSpace](https://arxiv.org/abs/2004.02546) - Härkönen et al.
+- 15 synthetic regression tests, Ruff and mypy.
+- Editable installation, source/wheel builds and importing the built wheel outside the checkout.
+- Default paired and multi-attribute data smoke runs, unlabeled FFHQ batches, and relative paths with Hydra directory changes.
+- Dataset verification success and nonzero failure status.
+- Checkpoint roundtrips, image saving, and gradient-bearing image logging to an offline W&B run.
 
-### Datasets
+`src/config/schema.py` contains dataclasses, not Pydantic models. Merging the base, FFHQ and multi-attribute configs into the structured schema was checked; the CLI does not automatically register that schema.
 
-- [CelebA-HQ](https://github.com/tkarras/progressive_growing_of_gans)
-- [FFHQ](https://github.com/NVlabs/ffhq-dataset)
+Full face datasets, pretrained models, GPU execution, Conda environment creation and every declared minimum dependency version were not exercised. Dataset verification establishes local loader usability, not official dataset completeness or cryptographic integrity. CPU runs with `pin_memory=true` may emit PyTorch's harmless no-accelerator warning; use `dataloader.pin_memory=false` when pinned GPU-transfer buffers are not needed.
 
----
+## References and license
 
-## License
+- [StyleGAN2](https://arxiv.org/abs/1912.04958)
+- [e4e](https://arxiv.org/abs/2102.02766)
+- [InterFaceGAN](https://arxiv.org/abs/1907.10786)
+- [GANSpace](https://arxiv.org/abs/2004.02546)
 
-MIT License - See [LICENSE](LICENSE) for details.
+Project code: [MIT](LICENSE). Dataset, image and external pretrained-model licenses apply separately.
